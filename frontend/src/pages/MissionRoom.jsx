@@ -1,12 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams, Link } from "react-router-dom";
-import { ArrowLeft, Hexagon, FileCheck2, AlertTriangle, Loader2, GitBranch, FolderTree } from "lucide-react";
+import { ArrowLeft, Hexagon, FileCheck2, AlertTriangle, Loader2, GitBranch, FolderTree, HardDrive, FlaskConical, Zap } from "lucide-react";
 import { getMission } from "@/lib/api";
 import { MISSION_STATUS_META } from "@/lib/status";
 import MissionGraph from "@/components/mission/MissionGraph";
 import ActivityFeed from "@/components/mission/ActivityFeed";
 import WorkforcePanel from "@/components/mission/WorkforcePanel";
 import WorkspacePanel from "@/components/mission/WorkspacePanel";
+import WorkerDetailPanel from "@/components/mission/WorkerDetailPanel";
+import CreditExhaustedModal from "@/components/mission/CreditExhaustedModal";
 import ArtifactView from "@/components/mission/ArtifactView";
 
 const TERMINAL = ["verified", "failed"];
@@ -16,6 +18,9 @@ export default function MissionRoom() {
   const [data, setData] = useState(null);
   const [showArtifact, setShowArtifact] = useState(false);
   const [view, setView] = useState("graph");
+  const [selectedAgent, setSelectedAgent] = useState(null);
+  const [showCreditModal, setShowCreditModal] = useState(false);
+  const creditModalShown = useRef(false);
   const artifactShown = useRef(false);
   const prevStatus = useRef(null);
   const timer = useRef(null);
@@ -39,6 +44,10 @@ export default function MissionRoom() {
           if (d.mission.type === "local") setView("workspace");
         }
         prevStatus.current = d.mission.status;
+        if (d.mission.credits_exhausted && !creditModalShown.current) {
+          creditModalShown.current = true;
+          setShowCreditModal(true);
+        }
         if (!TERMINAL.includes(d.mission.status)) {
           timer.current = setTimeout(poll, 1200);
         }
@@ -84,6 +93,13 @@ export default function MissionRoom() {
           <div className="text-[11px] text-zinc-500 truncate font-mono">{mission?.goal}</div>
         </div>
         <span
+          data-testid="mission-mode"
+          className={`text-[10px] px-2 py-1 rounded-full font-mono flex items-center gap-1 ${isLocal ? "bg-emerald-500/15 text-emerald-400" : "bg-zinc-800 text-zinc-400"}`}
+        >
+          {isLocal ? <HardDrive className="w-3 h-3" /> : <FlaskConical className="w-3 h-3" />}
+          {isLocal ? "LOCAL MODE" : "DEMO MODE"}
+        </span>
+        <span
           data-testid="mission-status"
           className={`text-xs px-3 py-1 rounded-full font-mono flex items-center gap-1.5 ${meta.cls}`}
         >
@@ -108,6 +124,15 @@ export default function MissionRoom() {
           <span className="text-sm text-amber-200">
             Reviewer flagged an inconsistency — HIVE routed it to the responsible agent to fix and recheck dependencies.
           </span>
+        </div>
+      )}
+
+      {/* credit exhausted banner */}
+      {mission?.credits_exhausted && (
+        <div data-testid="credit-banner" className="shrink-0 bg-amber-500/10 border-b border-amber-500/30 px-4 py-2 flex items-center gap-2">
+          <Zap className="w-4 h-4 text-amber-400 shrink-0" />
+          <span className="text-sm text-amber-200 flex-1">Demo credits exhausted — the mission continues with safe deterministic execution and still verifies.</span>
+          <button data-testid="open-credit-modal-btn" onClick={() => setShowCreditModal(true)} className="text-xs text-amber-300 underline">Renew</button>
         </div>
       )}
 
@@ -157,11 +182,18 @@ export default function MissionRoom() {
         </div>
         {/* sidebar */}
         <aside className="w-80 shrink-0 border-l border-zinc-800 bg-zinc-950/60">
-          <WorkforcePanel agents={agents} tasks={tasks} />
+          <WorkforcePanel agents={agents} tasks={tasks} onSelectAgent={setSelectedAgent} />
         </aside>
       </div>
 
       <ArtifactView open={showArtifact} onOpenChange={setShowArtifact} artifact={data?.artifact} />
+      <WorkerDetailPanel
+        open={!!selectedAgent}
+        onOpenChange={(v) => !v && setSelectedAgent(null)}
+        missionId={id}
+        agentId={selectedAgent?.id}
+      />
+      <CreditExhaustedModal open={showCreditModal} onOpenChange={setShowCreditModal} />
     </div>
   );
 }

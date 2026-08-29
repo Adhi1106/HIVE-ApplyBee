@@ -6,10 +6,16 @@ export const createMission = (goal) =>
   axios.post(`${API}/missions`, { goal }).then((r) => r.data);
 export const getMission = (id) =>
   axios.get(`${API}/missions/${id}`).then((r) => r.data);
-export const listMissions = () =>
-  axios.get(`${API}/missions`).then((r) => r.data);
+export const getWorkerDetail = (mid, aid) =>
+  axios.get(`${API}/missions/${mid}/agents/${aid}`).then((r) => r.data);
+export const listMissions = (projectId) =>
+  axios.get(`${API}/missions${projectId ? `?project_id=${projectId}` : ""}`).then((r) => r.data);
 export const getCredits = () =>
   axios.get(`${API}/credits`).then((r) => r.data);
+export const renewCredits = () =>
+  axios.post(`${API}/credits/renew`).then((r) => r.data);
+export const listProjects = () =>
+  axios.get(`${API}/projects`).then((r) => r.data);
 export const getWorkforce = () =>
   axios.get(`${API}/workforce`).then((r) => r.data);
 export const getExamples = () =>

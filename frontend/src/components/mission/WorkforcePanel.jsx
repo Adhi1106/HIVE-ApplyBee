@@ -1,14 +1,16 @@
 import { Crown, ShieldCheck, User, Wrench, Loader2 } from "lucide-react";
 import { AGENT_STATUS_META } from "@/lib/status";
 
-function AgentCard({ agent, task }) {
+function AgentCard({ agent, task, onClick }) {
   const meta = AGENT_STATUS_META[agent.status] || AGENT_STATUS_META.idle;
   const Icon = agent.is_manager ? Crown : agent.is_reviewer ? ShieldCheck : User;
   return (
-    <div
+    <button
+      type="button"
       data-testid="workforce-agent"
-      className={`rounded-lg border bg-zinc-900/50 p-3 transition-colors ${
-        agent.status === "revising" ? "border-amber-500/40" : "border-zinc-800 hover:border-zinc-700"
+      onClick={() => onClick?.(agent)}
+      className={`w-full text-left rounded-lg border bg-zinc-900/50 p-3 transition-colors ${
+        agent.status === "revising" ? "border-amber-500/40" : "border-zinc-800 hover:border-sky-500/40"
       }`}
     >
       <div className="flex items-center gap-2">
@@ -34,11 +36,12 @@ function AgentCard({ agent, task }) {
           <span className="text-[11px] text-zinc-400 leading-snug">{task.title}</span>
         </div>
       )}
-    </div>
+      <div className="mt-2 text-[10px] text-sky-400/70 font-mono">click for details →</div>
+    </button>
   );
 }
 
-export default function WorkforcePanel({ agents, tasks }) {
+export default function WorkforcePanel({ agents, tasks, onSelectAgent }) {
   const taskById = Object.fromEntries((tasks || []).map((t) => [t.id, t]));
   const ordered = [...(agents || [])].sort((a, b) => (b.is_manager ? 1 : 0) - (a.is_manager ? 1 : 0));
   return (
@@ -52,7 +55,7 @@ export default function WorkforcePanel({ agents, tasks }) {
           <div className="text-xs text-zinc-600 font-mono px-1 py-4 text-center">Assembling workforce…</div>
         )}
         {ordered.map((a) => (
-          <AgentCard key={a.id} agent={a} task={a.current_task_id ? taskById[a.current_task_id] : null} />
+          <AgentCard key={a.id} agent={a} task={a.current_task_id ? taskById[a.current_task_id] : null} onClick={onSelectAgent} />
         ))}
       </div>
     </div>

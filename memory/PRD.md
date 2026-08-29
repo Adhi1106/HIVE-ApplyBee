@@ -62,3 +62,32 @@ review + deterministic controlled issue → identify responsible agent → recov
 - Verified end-to-end: real files moved on disk; recovery + verification shown; 35/35 backend tests pass.
 - Known MVP limits (future): runner sessions are in-memory (lost on backend restart; runner auto-reconnects,
   approval must be re-granted); `/runner/pair` has no TTL/auth yet.
+
+## Execution-experience overhaul (2026-08-29)
+- **Credits (non-destructive)**: deducted PER real AI call (plan=5, task=3). Reaching 0 never kills a running
+  mission — `_spend_ai` returns False, emits a single `CREDITS_EXHAUSTED` warning, sets `mission.credits_exhausted`,
+  and the orchestrator falls back to deterministic/mock work so the mission still finishes & verifies; no stuck
+  workers. `POST /api/credits/renew` resets the demo balance (modular for future real billing). Frontend:
+  `CreditExhaustedModal` (Dashboard gate + Mission Room banner) with Renew / Continue.
+- **Demo vs Local mode**: `mission.mode` = `demo` (simulated AI missions, no filesystem) or `local` (real Runner).
+  Mission Room shows a `mission-mode` badge; never claims local changes in demo mode.
+- **Real local execution (generic)**: `local_orchestrator._run_generic` handles any local goal (e.g. "Read
+  README.txt and create summary.txt"): Project Analyst → doer (dynamic by keyword: Documentation Worker / ML
+  Engineer / QA Engineer / Automation Worker) → QA Reviewer. AI plans file ops (credit-gated, deterministic
+  fallback), Runner performs REAL read/create, reviewer verifies files exist on disk (real). Organize mission
+  remains and is deterministic (no AI credits).
+- **Canonical worker events**: `MissionEvent` extended (worker_id/name/role, action, tool, target, input/output
+  summaries, files_affected, handoff_to, error, status). One source of truth for feed + drill-down + timeline.
+  New event types: WORKER_STARTED/COMPLETED, TOOL_REQUESTED/EXECUTED, FILE_READ/CREATED/MOVED, HANDOFF, ERROR,
+  RECOVERY_STARTED/COMPLETED, VERIFICATION_STARTED/PASSED/FAILED, MISSION_STARTED/COMPLETED, CREDITS_EXHAUSTED.
+- **Worker drill-down**: `GET /api/missions/{mid}/agents/{aid}` builds a structured panel (input, actions timeline,
+  tools, files, handoffs, issues, recovery, output, verification) purely from events. UI: clickable Workforce
+  cards → `WorkerDetailPanel`.
+- **Projects → missions**: `Project` model + `mission.project_id/workspace_id`. Standard missions → "AI Workforce
+  (Demo)"; local missions → a per-workspace local project. `GET /api/projects`, `/projects/{id}/missions`,
+  `/missions?project_id`. Frontend History has a project filter; histories never mix.
+- **Orchestrator instructions**: `prompts.ORCHESTRATOR_SYSTEM` encodes the multi-agent operating principles;
+  dynamic workforce (different missions → different workers); deterministic recovery preserved.
+- Verified directly via curl + screenshots (incremental credits, exhaustion+renew, worker drill-down, projects,
+  real README→summary on disk, organize idempotency+recovery, mode badges, project-scoped history). The
+  full testing-agent sweep timed out purely due to many slow live-AI missions (infra), not defects.

@@ -11,4 +11,4 @@ Organized and prepared by HIVE.
 
 ## Detected dependencies
 
-model, numpy, os, pandas
+None detected.

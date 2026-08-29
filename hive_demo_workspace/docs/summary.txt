@@ -1,0 +1,1 @@
+HIVE Demo Project summary: ingests CSV data and runs a small prediction model; demonstrates the HIVE local runner.

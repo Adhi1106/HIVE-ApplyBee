@@ -1,14 +1,17 @@
 import { useEffect, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { ArrowRight, Loader2, Sparkles, Users, GitBranch, HardDrive } from "lucide-react";
-import { createMission, getExamples } from "@/lib/api";
+import { createMission, getExamples, getCredits } from "@/lib/api";
 import { toast } from "sonner";
+import CreditExhaustedModal from "@/components/mission/CreditExhaustedModal";
 
 export default function Dashboard() {
   const [goal, setGoal] = useState("");
   const [examples, setExamples] = useState([]);
   const [demo, setDemo] = useState("");
   const [loading, setLoading] = useState(false);
+  const [credits, setCredits] = useState(null);
+  const [showCreditModal, setShowCreditModal] = useState(false);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -16,12 +19,17 @@ export default function Dashboard() {
       setExamples(d.examples || []);
       setDemo(d.demo || "");
     }).catch(() => {});
+    getCredits().then((u) => setCredits(u?.credits)).catch(() => {});
   }, []);
 
   const launch = async (text) => {
     const g = (text ?? goal).trim();
     if (g.length < 5) {
       toast.error("Describe what you want your workforce to accomplish.");
+      return;
+    }
+    if (credits !== null && credits <= 0) {
+      setShowCreditModal(true);
       return;
     }
     setLoading(true);
@@ -150,6 +158,7 @@ export default function Dashboard() {
           ))}
         </div>
       </div>
+      <CreditExhaustedModal open={showCreditModal} onOpenChange={setShowCreditModal} onRenewed={(c) => setCredits(c)} />
     </div>
   );
 }

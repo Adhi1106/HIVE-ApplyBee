@@ -36,6 +36,16 @@ class LocalMissionCreate(BaseModel):
     goal: str = "Organize and prepare this project."
 
 
+class Project(BaseModel):
+    id: str = Field(default_factory=new_id)
+    user_id: str = "default-user"
+    name: str
+    kind: str = "demo"  # demo | local
+    workspace: Optional[str] = None
+    session_id: Optional[str] = None
+    created_at: str = Field(default_factory=now_iso)
+
+
 # ---------- Document models ----------
 class Mission(BaseModel):
     id: str = Field(default_factory=new_id)
@@ -45,8 +55,12 @@ class Mission(BaseModel):
     summary: str = ""
     status: str = "planning"
     type: str = "standard"  # standard | local
+    mode: str = "demo"  # demo (simulated) | local (real runner)
+    project_id: Optional[str] = None
+    workspace_id: Optional[str] = None
     session_id: Optional[str] = None
     workspace: Optional[str] = None
+    credits_exhausted: bool = False
     required_capabilities: List[str] = Field(default_factory=list)
     credits_used: int = 0
     provider: str = "mock"  # "openai" or "mock"
@@ -96,12 +110,27 @@ class Task(BaseModel):
 class MissionEvent(BaseModel):
     id: str = Field(default_factory=new_id)
     mission_id: str
+    project_id: Optional[str] = None
+    workspace_id: Optional[str] = None
     seq: int = 0
     type: str
     level: str = "info"  # info | success | warning | error
     actor: str = "HIVE"
     message: str
     task_id: Optional[str] = None
+    # canonical worker-event fields (one source of truth for feed + drill-down + timeline)
+    worker_id: Optional[str] = None
+    worker_name: Optional[str] = None
+    worker_role: Optional[str] = None
+    action: Optional[str] = None
+    tool: Optional[str] = None
+    target: Optional[str] = None
+    input_summary: Optional[str] = None
+    output_summary: Optional[str] = None
+    files_affected: List[str] = Field(default_factory=list)
+    handoff_to: Optional[str] = None
+    error: Optional[str] = None
+    status: Optional[str] = None
     created_at: str = Field(default_factory=now_iso)
 
 

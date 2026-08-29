@@ -12,13 +12,17 @@ from typing import Dict, Any, List, Optional
 
 from models import Mission, Agent, Task, MissionEvent, Artifact, Review, now_iso
 from provider import provider
+import mock_provider
 
 logger = logging.getLogger("hive.orchestrator")
 
 _seq_locks: Dict[str, asyncio.Lock] = {}
 _seqs: Dict[str, int] = {}
+_warned: set = set()  # missions already warned about credit exhaustion
 
 STEP = 0.7  # base pacing delay so the workforce is watchable
+AI_PLAN_COST = 5
+AI_TASK_COST = 3
 
 
 class Orchestrator:
@@ -33,11 +37,46 @@ class Orchestrator:
             return _seqs[mission_id]
 
     async def emit(self, mission_id: str, etype: str, message: str,
-                   level: str = "info", actor: str = "HIVE", task_id: Optional[str] = None):
+                   level: str = "info", actor: str = "HIVE", task_id: Optional[str] = None, **extra):
         seq = await self._next_seq(mission_id)
+        clean = {k: v for k, v in extra.items() if v is not None}
         ev = MissionEvent(mission_id=mission_id, seq=seq, type=etype,
-                          level=level, actor=actor, message=message, task_id=task_id)
+                          level=level, actor=actor, message=message, task_id=task_id, **clean)
         await self.db.mission_events.insert_one(ev.model_dump())
+
+    # ---------------- credit gating (never kills a running mission) ----------------
+    async def _spend_ai(self, mission_id: str, cost: int) -> bool:
+        """Deduct credits for a NEW AI operation. Returns False (and flags the mission)
+        when the balance is exhausted, so the caller can fall back to deterministic work."""
+        res = await self.db.users.update_one(
+            {"id": "default-user", "credits": {"$gte": cost}},
+            {"$inc": {"credits": -cost}},
+        )
+        if res.modified_count:
+            await self.db.missions.update_one({"id": mission_id}, {"$inc": {"credits_used": cost}})
+            return True
+        await self.db.missions.update_one({"id": mission_id}, {"$set": {"credits_exhausted": True}})
+        if mission_id not in _warned:
+            _warned.add(mission_id)
+            await self.emit(mission_id, "CREDITS_EXHAUSTED",
+                            "Demo credits exhausted — continuing with safe deterministic execution so the mission can finish and verify.",
+                            level="warning", actor="HIVE")
+        return False
+
+    async def _ai_plan(self, mission_id, goal):
+        if await self._spend_ai(mission_id, AI_PLAN_COST):
+            return await provider.plan_mission(goal), provider.last_source
+        return mock_provider.plan_mission(goal), "mock"
+
+    async def _ai_execute(self, mission_id, goal, actor, name, resp, task, dep_outputs, revision_issue=None):
+        if await self._spend_ai(mission_id, AI_TASK_COST):
+            return await provider.execute_task(goal, actor, name, resp, task, dep_outputs, revision_issue=revision_issue)
+        return mock_provider.execute_task(actor, name, task, dep_outputs, revision_issue)
+
+    async def _ai_report(self, mission_id, goal, completed):
+        if await self._spend_ai(mission_id, AI_TASK_COST):
+            return await provider.final_report(goal, completed)
+        return mock_provider.final_report(goal, completed)
 
     async def set_mission(self, mission_id: str, **fields):
         fields["updated_at"] = now_iso()
@@ -65,10 +104,10 @@ class Orchestrator:
         # 1. PLAN
         await self.emit(mission_id, "MISSION_CREATED", "Mission received. Mission Manager is analyzing the goal.", actor="Mission Manager")
         await asyncio.sleep(STEP)
-        plan = await provider.plan_mission(goal)
+        plan, psource = await self._ai_plan(mission_id, goal)
         await self.set_mission(mission_id, status="assembling", title=plan.get("title", "Mission"),
                                summary=plan.get("summary", ""), required_capabilities=plan.get("required_capabilities", []),
-                               provider=provider.last_source)
+                               provider=psource)
 
         # 2. WORKFORCE
         manager = Agent(mission_id=mission_id, name="HIVE", role="Mission Manager",
@@ -152,7 +191,7 @@ class Orchestrator:
         await self.emit(mission_id, "REVIEW_REQUESTED", "Reviewer performing final verification of the complete mission.", actor=reviewer["role"])
         await asyncio.sleep(STEP)
         completed = [t for t in tasks if t["status"] in ("completed", "verified")]
-        report = await provider.final_report(goal, completed)
+        report = await self._ai_report(mission_id, goal, completed)
         artifact = Artifact(mission_id=mission_id, title=report.get("title", "Deliverable"), content=report)
         await self.db.artifacts.insert_one(artifact.model_dump())
         await self.db.reviews.insert_one(Review(mission_id=mission_id, verdict="pass", issue="").model_dump())
@@ -162,9 +201,7 @@ class Orchestrator:
         # all specialists finished their contribution
         await self.db.agents.update_many({"mission_id": mission_id, "is_reviewer": False, "is_manager": False}, {"$set": {"status": "done", "current_task_id": None}})
 
-        credits = len(tasks) * 3 + 6
-        await self.set_mission(mission_id, status="verified", final_artifact_id=artifact.id, credits_used=credits)
-        await self.db.users.update_one({"id": "default-user"}, {"$inc": {"credits": -credits}})
+        await self.set_mission(mission_id, status="verified", final_artifact_id=artifact.id)
         await self.emit(mission_id, "MISSION_VERIFIED", "Mission VERIFIED. Final deliverable is ready.", level="success", actor="Mission Manager")
 
     # ---------------- per-task execution ----------------
@@ -176,22 +213,27 @@ class Orchestrator:
         await self.set_task(task, status="running", started_at=now_iso())
         if agent:
             await self.set_agent(agent, status="working", current_task_id=task["id"])
-        await self.emit(mission_id, "TASK_STARTED", f"{actor} started: {task['title']}.", actor=actor, task_id=task["id"])
+        wk = {"worker_id": agent["id"] if agent else None, "worker_name": agent["name"] if agent else actor, "worker_role": actor}
+        await self.emit(mission_id, "WORKER_STARTED", f"{actor} started: {task['title']}.", actor=actor, task_id=task["id"], action="start_task", status="running", input_summary=task.get("description"), **wk)
         await asyncio.sleep(STEP)
 
         dep_outputs = [
             {"title": tasks_by_id[d]["title"], "output": tasks_by_id[d].get("output")}
             for d in task["dependencies"] if tasks_by_id.get(d)
         ]
-        result = await provider.execute_task(
-            goal, actor, agent["name"] if agent else actor,
+        result = await self._ai_execute(
+            mission_id, goal, actor, agent["name"] if agent else actor,
             agent["responsibility"] if agent else "", task, dep_outputs,
         )
         await self.set_task(task, output=result.get("output"), summary=result.get("summary", ""), status="completed", completed_at=now_iso())
         if agent:
             await self.set_agent(agent, status="waiting", current_task_id=None)
-        await self.emit(mission_id, "TASK_COMPLETED", result.get("summary", f"{actor} completed {task['title']}."), level="success", actor=actor, task_id=task["id"])
-        await self.emit(mission_id, "OUTPUT_UPDATED", f"Shared output of '{task['title']}' to dependent tasks.", actor=actor, task_id=task["id"])
+        await self.emit(mission_id, "WORKER_COMPLETED", result.get("summary", f"{actor} completed {task['title']}."), level="success", actor=actor, task_id=task["id"], action="complete_task", status="completed", output_summary=result.get("summary"), **wk)
+        # structured handoff to dependent task owners
+        for d in dependents.get(task["id"], []):
+            dep = tasks_by_id.get(d)
+            if dep:
+                await self.emit(mission_id, "HANDOFF", f"{actor} handed '{task['title']}' output to {dep['owner_role']}.", actor=actor, task_id=task["id"], action="handoff", handoff_to=dep["owner_role"], output_summary=result.get("summary"), **wk)
 
         # recheck note if this task was downstream of a corrected task
         if task["id"] in recheck_pending:
@@ -216,23 +258,25 @@ class Orchestrator:
         await asyncio.sleep(STEP)
 
         # Mission Manager identifies the responsible agent
-        await self.emit(mission_id, "ISSUE_ROUTED", f"Mission Manager identified {actor} as responsible and routed the issue back for revision.", level="warning", actor="Mission Manager", task_id=task["id"])
+        wk = {"worker_id": agent["id"] if agent else None, "worker_name": agent["name"] if agent else actor, "worker_role": actor}
+        await self.emit(mission_id, "ERROR", f"Reviewer detected an issue in '{task['title']}'.", level="warning", actor=reviewer["role"], task_id=task["id"], error=issue, **wk)
+        await self.emit(mission_id, "ISSUE_ROUTED", f"Mission Manager identified {actor} as responsible and routed the issue back for revision.", level="warning", actor="Mission Manager", task_id=task["id"], handoff_to=actor)
         if agent:
             await self.set_agent(agent, status="revising", current_task_id=task["id"], retry_count=agent.get("retry_count", 0) + 1)
         await self.set_task(task, status="running", retry_count=task["retry_count"] + 1)
-        await self.emit(mission_id, "TASK_STARTED", f"{actor} is revising '{task['title']}' to correct the inconsistency.", actor=actor, task_id=task["id"])
+        await self.emit(mission_id, "RECOVERY_STARTED", f"{actor} is revising '{task['title']}' to correct the inconsistency.", actor=actor, task_id=task["id"], action="revise", status="running", **wk)
         await asyncio.sleep(STEP)
 
         dep_outputs = [
             {"title": tasks_by_id[d]["title"], "output": tasks_by_id[d].get("output")}
             for d in task["dependencies"] if tasks_by_id.get(d)
         ]
-        fixed = await provider.execute_task(
-            goal, actor, agent["name"] if agent else actor,
+        fixed = await self._ai_execute(
+            mission_id, goal, actor, agent["name"] if agent else actor,
             agent["responsibility"] if agent else "", task, dep_outputs, revision_issue=issue,
         )
         await self.set_task(task, output=fixed.get("output"), summary=fixed.get("summary", ""), status="completed", error=None)
-        await self.emit(mission_id, "TASK_COMPLETED", fixed.get("summary", "Correction applied."), level="success", actor=actor, task_id=task["id"])
+        await self.emit(mission_id, "RECOVERY_COMPLETED", fixed.get("summary", "Correction applied."), level="success", actor=actor, task_id=task["id"], action="revise", status="completed", output_summary=fixed.get("summary"), **wk)
 
         # mark downstream dependents for recheck
         downstream = dependents.get(task["id"], [])

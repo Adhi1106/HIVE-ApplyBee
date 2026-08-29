@@ -28,6 +28,7 @@ local_orchestrator = LocalOrchestrator(db)
 
 DEFAULT_USER = "default-user"
 STARTING_CREDITS = 500
+DEFAULT_PROJECT = "ai-workforce"
 
 EXAMPLE_MISSIONS = [
     "Analyze why a fictional SaaS company's customer churn increased.",
@@ -44,9 +45,28 @@ async def ensure_user():
         await db.users.insert_one({"id": DEFAULT_USER, "name": "HIVE Operator", "credits": STARTING_CREDITS, "created_at": now_iso()})
 
 
+async def ensure_default_project():
+    p = await db.projects.find_one({"id": DEFAULT_PROJECT})
+    if not p:
+        await db.projects.insert_one({"id": DEFAULT_PROJECT, "user_id": DEFAULT_USER, "name": "AI Workforce (Demo)",
+                                      "kind": "demo", "workspace": None, "session_id": None, "created_at": now_iso()})
+
+
+async def get_or_create_local_project(session):
+    p = await db.projects.find_one({"kind": "local", "workspace": session.workspace})
+    if p:
+        return p
+    name = (session.workspace or "Local Project").rstrip("/").split("/")[-1] or "Local Project"
+    doc = {"id": __import__("uuid").uuid4().hex[:12], "user_id": DEFAULT_USER, "name": name,
+           "kind": "local", "workspace": session.workspace, "session_id": session.id, "created_at": now_iso()}
+    await db.projects.insert_one(doc)
+    return doc
+
+
 @app.on_event("startup")
 async def startup():
     await ensure_user()
+    await ensure_default_project()
 
 
 @api_router.get("/")
@@ -66,6 +86,16 @@ async def credits():
     return u
 
 
+@api_router.post("/credits/renew")
+async def renew_credits():
+    """Demo-only: reset the demo credit balance. A real subscription/billing
+    provider will replace this endpoint later (kept modular on purpose)."""
+    await ensure_user()
+    await db.users.update_one({"id": DEFAULT_USER}, {"$set": {"credits": STARTING_CREDITS}})
+    u = await db.users.find_one({"id": DEFAULT_USER}, {"_id": 0})
+    return u
+
+
 @api_router.post("/missions")
 async def create_mission(body: MissionCreate):
     goal = (body.goal or "").strip()
@@ -74,18 +104,36 @@ async def create_mission(body: MissionCreate):
     if _is_unsafe(goal):
         raise HTTPException(status_code=400, detail="This mission requests unsafe or disallowed actions and was blocked by HIVE safety policy.")
     await ensure_user()
-    u = await db.users.find_one({"id": DEFAULT_USER})
-    if (u or {}).get("credits", 0) <= 0:
-        raise HTTPException(status_code=402, detail="Out of credits. Add more to launch another mission.")
-    mission = Mission(goal=goal, user_id=DEFAULT_USER, provider="openai" if provider.live_available() else "mock")
+    await ensure_default_project()
+    mission = Mission(goal=goal, user_id=DEFAULT_USER, mode="demo", project_id=DEFAULT_PROJECT,
+                      provider="openai" if provider.live_available() else "mock")
     await db.missions.insert_one(mission.model_dump())
     asyncio.create_task(orchestrator.run(mission.id, goal))
     return {"id": mission.id, "status": mission.status}
 
 
+@api_router.get("/projects")
+async def list_projects():
+    await ensure_default_project()
+    projects = await db.projects.find({}, {"_id": 0}).sort("created_at", 1).to_list(200)
+    counts = {}
+    for m in await db.missions.find({}, {"_id": 0, "project_id": 1}).to_list(1000):
+        counts[m.get("project_id")] = counts.get(m.get("project_id"), 0) + 1
+    for p in projects:
+        p["mission_count"] = counts.get(p["id"], 0)
+    return {"projects": projects}
+
+
+@api_router.get("/projects/{project_id}/missions")
+async def project_missions(project_id: str):
+    missions = await db.missions.find({"project_id": project_id}, {"_id": 0}).sort("created_at", -1).to_list(200)
+    return {"missions": missions}
+
+
 @api_router.get("/missions")
-async def list_missions():
-    missions = await db.missions.find({}, {"_id": 0}).sort("created_at", -1).to_list(200)
+async def list_missions(project_id: str | None = None):
+    q = {"project_id": project_id} if project_id else {}
+    missions = await db.missions.find(q, {"_id": 0}).sort("created_at", -1).to_list(200)
     return {"missions": missions}
 
 
@@ -101,6 +149,46 @@ async def get_mission(mission_id: str):
     if mission.get("final_artifact_id"):
         artifact = await db.artifacts.find_one({"id": mission["final_artifact_id"]}, {"_id": 0})
     return {"mission": mission, "agents": agents, "tasks": tasks, "events": events, "artifact": artifact}
+
+
+@api_router.get("/missions/{mission_id}/agents/{agent_id}")
+async def worker_detail(mission_id: str, agent_id: str):
+    """Structured worker drill-down built ONLY from canonical mission events + tasks
+    (no hidden reasoning, no hardcoded descriptions)."""
+    agent = await db.agents.find_one({"id": agent_id, "mission_id": mission_id}, {"_id": 0})
+    if not agent:
+        raise HTTPException(status_code=404, detail="Worker not found")
+    tasks = await db.tasks.find({"mission_id": mission_id, "owner_agent_id": agent_id}, {"_id": 0}).to_list(100)
+    all_events = await db.mission_events.find({"mission_id": mission_id}, {"_id": 0}).sort("seq", 1).to_list(2000)
+    events = [e for e in all_events if e.get("worker_id") == agent_id or e.get("actor") == agent.get("role")]
+    files, tools, handoffs, issues, recovery = [], [], [], [], []
+    for e in events:
+        for f in (e.get("files_affected") or []):
+            if f not in files:
+                files.append(f)
+        if e.get("tool") and e["tool"] not in tools:
+            tools.append(e["tool"])
+        if e.get("handoff_to"):
+            handoffs.append({"to": e["handoff_to"], "what": e.get("output_summary") or e.get("message"), "at": e.get("created_at")})
+        if e.get("level") in ("warning", "error") or e.get("error"):
+            issues.append({"message": e.get("error") or e.get("message"), "at": e.get("created_at")})
+        if e.get("type") in ("RECOVERY_STARTED", "RECOVERY_COMPLETED"):
+            recovery.append({"type": e["type"], "message": e.get("message"), "at": e.get("created_at")})
+    verified = any(t.get("status") == "verified" for t in tasks) or any(
+        e.get("type") in ("VERIFICATION_PASSED", "REVIEW_PASSED") and e.get("worker_id") == agent_id for e in all_events)
+    summary = {
+        "input": [{"task": t["title"], "context": t.get("description")} for t in tasks],
+        "actions": [{"type": e["type"], "action": e.get("action"), "message": e["message"], "at": e.get("created_at")} for e in events if e.get("action") or e["type"] in ("WORKER_STARTED", "WORKER_COMPLETED", "TOOL_EXECUTED", "RECOVERY_STARTED", "RECOVERY_COMPLETED")],
+        "tools": tools,
+        "files": files,
+        "output": [{"task": t["title"], "summary": t.get("summary"), "output": t.get("output")} for t in tasks],
+        "handoffs": handoffs,
+        "issues": issues,
+        "recovery": recovery,
+        "verified": verified,
+        "timeline": [{"type": e["type"], "message": e["message"], "level": e.get("level"), "at": e.get("created_at")} for e in events],
+    }
+    return {"agent": agent, "tasks": tasks, "events": events, "summary": summary}
 
 
 @api_router.get("/workforce")
@@ -183,10 +271,9 @@ async def create_local_mission(body: LocalMissionCreate):
     if not s or s.status != "approved":
         raise HTTPException(status_code=400, detail="Connect and approve a workspace runner first.")
     await ensure_user()
-    u = await db.users.find_one({"id": DEFAULT_USER})
-    if (u or {}).get("credits", 0) <= 0:
-        raise HTTPException(status_code=402, detail="Out of credits.")
-    mission = Mission(goal=body.goal, user_id=DEFAULT_USER, type="local",
+    project = await get_or_create_local_project(s)
+    mission = Mission(goal=body.goal, user_id=DEFAULT_USER, type="local", mode="local",
+                      project_id=project["id"], workspace_id=s.workspace,
                       session_id=body.session_id, workspace=s.workspace, provider="runner")
     await db.missions.insert_one(mission.model_dump())
     asyncio.create_task(local_orchestrator.run(mission.id, body.goal, body.session_id))

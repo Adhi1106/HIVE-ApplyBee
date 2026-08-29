@@ -14,6 +14,7 @@ def mission(api_client):
     return payload
 
 
+@pytest.mark.xdist_group(name="runner_ws")
 class TestMissionLifecycle:
     def test_reaches_verified(self, mission):
         m = mission["mission"]
@@ -52,7 +53,7 @@ class TestMissionLifecycle:
         assert len(set(seqs)) == len(seqs), "duplicate seq values"
         types = [e["type"] for e in events]
         for required in ["MISSION_CREATED", "WORKFORCE_ASSEMBLING", "AGENT_JOINED",
-                         "TASK_CREATED", "TASK_STARTED", "TASK_COMPLETED",
+                         "TASK_CREATED", "WORKER_STARTED", "WORKER_COMPLETED",
                          "REVIEW_REQUESTED", "REVIEW_PASSED", "MISSION_VERIFIED"]:
             assert required in types, f"missing event {required}"
 
@@ -94,7 +95,11 @@ class TestMissionLifecycle:
         assert any(m["id"] == mid and m["status"] == "verified" for m in r.json()["missions"])
 
     def test_credits_deducted(self, api_client, mission):
+        """Iteration-3 costing: credits are spent PER AI call
+        (plan=5, task=3, one extra task call for the deterministic revision, report=3)."""
         r = api_client.get(f"{BASE_URL}/api/credits", timeout=30)
         assert r.status_code == 200
         assert isinstance(r.json()["credits"], int)
-        assert mission["mission"]["credits_used"] == len(mission["tasks"]) * 3 + 6
+        expected = 5 + 3 * (len(mission["tasks"]) + 1) + 3
+        assert mission["mission"]["credits_used"] == expected, \
+            f'credits_used={mission["mission"]["credits_used"]} expected={expected}'

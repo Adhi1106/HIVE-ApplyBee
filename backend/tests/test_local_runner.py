@@ -115,8 +115,9 @@ class TestLocalMission:
         assert m["type"] == "local"
         assert m["provider"] == "runner"
         assert m["workspace"] == "/app/hive_demo_workspace"
-        assert m.get("credits_used", 0) > 0
+        # iteration 3: the organize mission is fully deterministic -> no AI credits
         TestLocalMission.payload = payload
+        assert m.get("credits_used", 0) == 0, "deterministic organize must not spend credits"
 
     def test_dynamic_filesystem_workforce(self, client):
         p = TestLocalMission.payload
