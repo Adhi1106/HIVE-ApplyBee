@@ -1,0 +1,93 @@
+{
+  "theme": "dark",
+  "typography": {
+    "headings": {
+      "family": "Outfit, sans-serif",
+      "weights": ["300", "500", "700"],
+      "tracking": "tracking-tight",
+      "instruction": "Do not use Inter for headings. Ensure H1 is expressive."
+    },
+    "body": {
+      "family": "IBM Plex Sans, sans-serif",
+      "weights": ["400", "500"]
+    },
+    "mono": {
+      "family": "JetBrains Mono, monospace",
+      "instruction": "Use for activity feed, logs, and technical identifiers."
+    }
+  },
+  "colors": {
+    "background": "#09090b",
+    "surface": "#18181b",
+    "surface_elevated": "#27272a",
+    "primary": "#38bdf8",
+    "verified": "#10b981",
+    "warning": "#f59e0b",
+    "error": "#ef4444",
+    "text_primary": "#f8fafc",
+    "text_secondary": "#94a3b8",
+    "border": "#27272a",
+    "forbidden_colors": ["#7351B7", "#1B93A4"]
+  },
+  "visual_enhancers": {
+    "surfaces": "Use 'Optical Clarity' Glassmorphism (backdrop-blur-xl bg-black/60 with 1px border-white/10) for floating panels like the activity feed or sticky headers.",
+    "borders": "Expose the skeleton. Use 1px solid border-zinc-800 for cards, hover to border-zinc-700. Remove border on the last item of a row to create an open edge.",
+    "shadows": "Minimal shadows. Rely on 1px borders and slight background lightening for elevation. Use glow drop-shadows ONLY for the 'Verified' status or active running node.",
+    "nodes": "React Flow nodes must be sleek, dark mode specific with colored left borders denoting status (e.g., border-l-4 border-l-emerald-500 for verified, border-l-amber-500 for revising)."
+  },
+  "layouts": {
+    "dashboard": "Centered hero layout with generous spacing (py-24 or py-32) for the mission input. 'Bento' grid below for example missions. The 'HIVE IT' input should be massive (text-2xl or text-3xl) to feel consumer-friendly.",
+    "mission_room": "High-Density Grid. Full height (h-screen). Top Nav. The main body is a flex or grid layout: Main canvas takes up 75% width, Right Sidebar (Workforce) takes 25%. The Bottom Feed (Activity) floats at the bottom of the main canvas or is a dedicated bottom pane (h-1/4)."
+  },
+  "components": {
+    "buttons": "Pill-shaped or rounded-md with hover:-translate-y-0.5 active:translate-y-0 transition-transform. The 'HIVE IT' button must be visually prominent.",
+    "react_flow": "Use @xyflow/react. Nodes must be custom components (MissionManagerNode, AgentNode) with styled handles and status indicators. Hide default xyflow attribution via CSS if needed, or style controls to match dark theme.",
+    "activity_feed": "Terminal-like or clean list view. Monospace font for timestamps and agent names. Color-coded dots for events (green=success, yellow=warning/recovery, blue=info).",
+    "cards": "Use flat backgrounds with 1px subtle border, no shadow by default. On hover, slight lift and subtle glow."
+  },
+  "accessibility": {
+    "contrast": "Ensure all text against dark surfaces meets minimum 4.5:1. Never use pure transparent backgrounds over content.",
+    "focus": "Use focus-visible:ring-2 focus-visible:ring-sky-500 focus-visible:outline-none.",
+    "data-testid": "Mandatory on all interactive elements, buttons, inputs, nodes, and feed items."
+  },
+  "media": {
+    "icons": "lucide-react (already installed). Use heavily for agent roles and status (CheckCircle, AlertTriangle, Activity, Loader2, GitMerge). DO NOT use AI emojis.",
+    "images": "Use the provided abstract data URL sparingly for empty states or dashboard background texture."
+  },
+  "image_urls": {
+    "example_mission_bg": {
+      "url": "https://images.unsplash.com/photo-1639322537228-f710d846310a?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NjA1NDh8MHwxfHNlYXJjaHwzfHxhYnN0cmFjdCUyMGRhcmslMjBkYXRhJTIwdGVjaG5vbG9neXxlbnwwfHx8fDE3ODgwMjc3ODR8MA&ixlib=rb-4.1.0&q=85",
+      "description": "Abstract data nodes on black surface. Use as an extremely low opacity (opacity-10) background texture for the Dashboard, or on example mission cards."
+    }
+  },
+  "3d_libraries": {
+    "react_flow": "Required for the Agent/Task dependency GRAPH. Install @xyflow/react."
+  },
+  "instructions_to_main_agent": [
+    "Execute `yarn add @xyflow/react dagre` before starting the implementation.",
+    "Build the 'HIVE' Dashboard with a large, consumer-friendly input field and a 'HIVE IT' button. Clicking it navigates to the Mission Room.",
+    "In the Mission Room, use @xyflow/react to build the DAG (Directed Acyclic Graph) showing the workforce tasks. You can use 'dagre' for auto-layout or hardcode node positions for the MVP.",
+    "Create custom node types in React Flow (e.g., AgentNode) that display the agent's role, current status, and task.",
+    "Simulate the workflow execution visually. The DAG nodes should change state sequentially over time using setTimeout or a state machine (Pending -> Running -> Needs Revision/Error -> Recovery -> Verified).",
+    "CRITICAL: Highlight the error-recovery/responsibility flow. When a node hits an error, change its border to Amber, show a warning icon, log an event to the bottom feed ('⚠ Reviewer detected an inconsistency', '↻ routed issue to...'), then transition it to 'revising' and eventually 'completed'.",
+    "The final node must be 'Verification'. Once completed, mark the mission as 'VERIFIED' with a prominent green highlight across the UI.",
+    "The Right panel must show the Workforce list with live status sync to the graph.",
+    "The Bottom panel must be a live activity/event feed that appends typed events with icons as the graph progresses.",
+    "Prioritize workflow logic and the React Flow simulation. It needs to look like a real AI workforce is collaborating."
+  ],
+  "UNIVERSAL GUIDELINES FOR MAIN AGENT": [
+    "You tend to converge toward generic, 'on distribution' outputs. Avoid this: make creative, distinctive frontends that surprise and delight.",
+    "Dark colors look good when used independently without gradients. DO NOT use dark colors as gradients.",
+    "Don't make generic centered layouts, simplistic gradients, and uniform styling.",
+    "Create depth through layered design elements with z-index hierarchy.",
+    "Use glass-morphism effects with backdrop filters (12-24px blur).",
+    "You MUST NOT apply universal transition. Eg: transition: all. Always add transitions for specific interactive elements like button, input excluding transforms.",
+    "You MUST NOT center align the app container, ie do not add .App { text-align: center; } in the css file.",
+    "Always use modern button styles like pill-shaped, or sharp button with interaction animations & color relevant to the app style.",
+    "NEVER: use AI assistant Emoji characters like 🤖🧠💭💡🔮🎯 etc for icons. Use Phosphor or Lucide icons.",
+    "Every interaction needs micro-animations - hover states, transitions, entrance animations. Static = dead.",
+    "Use 2-3x more spacing than feels comfortable. Cramped designs look cheap.",
+    "Subtle grain textures, noise overlays, custom cursors, selection states, and loading animations: separates good from extraordinary.",
+    "Use `sonner` for toasts. Sonner component are located in /app/src/components/ui/sonner.tsx"
+  ]
+}

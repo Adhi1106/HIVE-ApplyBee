@@ -1,0 +1,54 @@
+{
+  "summary": "Full backend + frontend E2E test of HIVE. Backend: 22 pytest tests across health/examples/credits/validation/safety, full mission lifecycle (plan->workforce->DAG->parallel->deterministic recovery->verified artifact) and dynamic-workforce comparison across 3 live-AI missions — 22/22 passed, provider='openai' for every mission (no mock fallback observed, 0 fallback warnings in logs). Frontend: dashboard, example fill, HIVE IT launch, mission room live polling to Verified (~55s), artifact dialog, history, workforce, credits pages all functional. 3 frontend polish/UX defects found (React Flow not fit to nodes, artifact modal auto-opens on revisiting completed missions, specialist agents stuck at 'Waiting' after verification). No backend issues in current code; one historical FAILED mission from pre-fix code remains in the DB.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/missions", "issue": "Legacy record present: mission 83a1223c-3345-4147-bf92-17c5c05d4445 status=failed, error=\"'Agent' object has no attribute 'update'\" (oldest mission, produced before the current orchestrator code). Not reproducible with current code (5 fresh missions all verified), but it renders as a red 'Failed' card in Mission History and shows 0 credits. Consider clearing stale demo data and confirming the no-reviewer fallback path in orchestrator._run (line ~99) always passes model_dump() dicts to set_agent."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "MissionGraph (React Flow)", "issue": "fitView only runs on mount when nodes array is still empty (data arrives via async polling), so the graph stays at default scale(2) and 6 of 8 nodes are rendered fully outside the visible pane. Clicking the built-in 'Fit View' control fixes it (scale 0.68, 0/8 offscreen) — proving the RCA. Fix: call useReactFlow().fitView() in an effect keyed on nodes.length, or remount with key={nodes.length}.", "selector": "[data-testid=\"mission-graph\"] .react-flow__viewport", "priority": "HIGH"},
+      {"component": "MissionRoom / ArtifactView", "issue": "Opening an ALREADY-verified mission from Mission History immediately auto-opens the artifact dialog; its overlay blocks all interaction with the graph/feed until the user presses Escape (Playwright normal click on graph controls is intercepted by DialogOverlay). Auto-open should only fire on a live status transition to verified, not on initial load of a finished mission.", "selector": "[data-testid=\"artifact-dialog\"]", "priority": "MEDIUM"},
+      {"component": "WorkforcePanel / orchestrator agent state", "issue": "After MISSION_VERIFIED, specialist agents remain in 'Waiting' status (only Mission Manager and Reviewer become 'Done') in both the mission room sidebar and /workforce grid — looks like the mission never finished for those agents.", "selector": "[data-testid=\"workforce-agent\"]", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Credits page", "issues": ["Shows placeholder '—' and 'No usage yet.' for ~1-2s while /api/credits and /api/missions resolve; a skeleton/loading state would avoid the momentary 'empty' impression (data renders correctly: 377 remaining, 123 used across 7 missions)."]},
+      {"screen": "Mission Room artifact dialog", "issues": ["Radix console warning: Missing `Description` or `aria-describedby` for DialogContent (a11y)."]},
+      {"screen": "Mission Room", "issues": ["React Flow attribution hidden (Pro-only) console warning."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/conftest.py",
+    "/app/backend/tests/test_basics.py",
+    "/app/backend/tests/test_mission_lifecycle.py",
+    "/app/backend/tests/test_dynamic_workforce.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "MissionGraph: re-run fitView when nodes stream in (currently 6/8 nodes off-screen on load).",
+    "MissionRoom: don't auto-open the artifact dialog when loading an already-verified mission (modal overlay blocks the room).",
+    "Orchestrator: mark all specialist agents 'done' (or 'idle') on MISSION_VERIFIED instead of leaving them 'waiting'.",
+    "Optional: purge the legacy failed mission record and add aria-describedby to the artifact DialogContent."
+  ],
+  "critical_code_review_comments": [
+    "orchestrator._seqs/_seq_locks are module-level in-memory dicts — event seq counters reset on backend restart and are not shared across workers; an in-flight mission after a reload would emit duplicate seq values. Consider deriving seq from a MongoDB counter or max(seq)+1.",
+    "orchestrator._run: if the execution wave loop hits a state where nothing is ready (cyclic/unsatisfiable dependencies), it silently `break`s and the mission still proceeds to REVIEW/VERIFIED with incomplete tasks. Should mark blocked tasks and fail/flag the mission.",
+    "provider._validate_plan uses bare asserts; fine for fallback control-flow but relies on assertions not being stripped (-O). Prefer explicit raises.",
+    "Credits deduction (users.$inc -credits) can go negative — no balance check before starting a mission even though a credits meter is surfaced in the UI."
+  ],
+  "updated_files": [
+    "/app/backend/tests/conftest.py",
+    "/app/backend/tests/test_basics.py",
+    "/app/backend/tests/test_mission_lifecycle.py",
+    "/app/backend/tests/test_dynamic_workforce.py"
+  ],
+  "success_rate": {"backend": "100% (22/22 pytest)", "frontend": "~85% (all routes/flows work; 3 UX defects)"},
+  "seed_data_creation": "Created 4 live-AI missions via API/UI (marketing x2, SaaS churn, habit tracker) — all reached verified; ~85 credits consumed from default-user.",
+  "should_call_test_agent_after_fix": true,
+  "should_main_agent_self_test": false,
+  "test_credentials": "N/A — app has no auth (single implicit default-user); /app/memory/test_credentials.md not present and not needed.",
+  "context_for_next_testing_agent": "Backend suite lives in /app/backend/tests (pytest.ini forces -n 2 --dist loadscope; lifecycle and dynamic-workforce classes each create real missions and poll up to 200s — a full run takes ~60s with live AI). Verified assertions: exactly one task with retry_count==1 and status 'verified', REVISION_REQUIRED(warning)+ISSUE_ROUTED(warning)+>=2 REVIEW_PASSED, PARALLEL_EXECUTION events, artifact.content with title/sections/recommendations, credits_used == tasks*3+6, no _id leaks. Frontend: after fixes, re-verify (1) all React Flow nodes visible without manual Fit View, (2) artifact dialog does NOT auto-open when entering a verified mission via /history, (3) specialist agent statuses after verification.",
+  "rca_of_the_issue": "React Flow graph: MissionRoom fetches mission data after mount, so ReactFlow's one-shot `fitView` prop evaluates against an empty node set and the viewport keeps the default translate/scale(2); measured 6/8 nodes fully outside the pane, and clicking the native Fit View control restored scale 0.68 with 0 offscreen nodes. Artifact modal: MissionRoom's artifactShown ref opens the dialog on the first poll where status === 'verified', which is also true on initial load of an already-completed mission, so the modal (and its pointer-blocking overlay) appears before the user can inspect the room."
+}

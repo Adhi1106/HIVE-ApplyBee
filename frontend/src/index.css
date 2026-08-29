@@ -1,0 +1,85 @@
+@import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;500;700;800&family=IBM+Plex+Sans:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap');
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+    margin: 0;
+    font-family: 'IBM Plex Sans', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    background-color: #09090b;
+    color: #f8fafc;
+}
+
+code, .font-mono {
+    font-family: 'JetBrains Mono', monospace;
+}
+
+h1, h2, h3, h4, .font-display {
+    font-family: 'Outfit', sans-serif;
+}
+
+@layer base {
+    :root {
+        --background: 240 10% 3.9%;
+        --foreground: 210 40% 98%;
+        --card: 240 6% 10%;
+        --card-foreground: 210 40% 98%;
+        --popover: 240 6% 10%;
+        --popover-foreground: 210 40% 98%;
+        --primary: 199 89% 60%;
+        --primary-foreground: 240 10% 3.9%;
+        --secondary: 240 4% 16%;
+        --secondary-foreground: 210 40% 98%;
+        --muted: 240 4% 16%;
+        --muted-foreground: 215 16% 65%;
+        --accent: 240 4% 16%;
+        --accent-foreground: 210 40% 98%;
+        --destructive: 0 84% 60%;
+        --destructive-foreground: 210 40% 98%;
+        --border: 240 4% 16%;
+        --input: 240 4% 16%;
+        --ring: 199 89% 60%;
+        --radius: 0.6rem;
+    }
+}
+
+@layer base {
+    * {
+        @apply border-border;
+    }
+    body {
+        @apply bg-background text-foreground;
+    }
+}
+
+/* thin scrollbars */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #27272a; border-radius: 8px; }
+::-webkit-scrollbar-thumb:hover { background: #3f3f46; }
+
+::selection { background: #38bdf8; color: #09090b; }
+
+/* React Flow dark theme */
+.react-flow__attribution { display: none; }
+.react-flow__edge-path { stroke: #3f3f46; stroke-width: 1.5; }
+.react-flow__edge.animated .react-flow__edge-path { stroke: #38bdf8; }
+.react-flow__handle { background: #52525b; border: none; width: 6px; height: 6px; }
+.react-flow__controls { background: #18181b; border: 1px solid #27272a; border-radius: 8px; overflow: hidden; }
+.react-flow__controls-button { background: #18181b; border-bottom: 1px solid #27272a; color: #94a3b8; }
+.react-flow__controls-button:hover { background: #27272a; }
+.react-flow__controls-button svg { fill: #94a3b8; }
+
+@keyframes hive-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(56,189,248,0.4); }
+    50% { box-shadow: 0 0 0 6px rgba(56,189,248,0); }
+}
+.hive-running { animation: hive-pulse 1.6s infinite; }
+
+@keyframes hive-fade-in {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+.hive-fade-in { animation: hive-fade-in 0.3s ease-out; }
