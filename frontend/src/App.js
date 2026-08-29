@@ -6,6 +6,7 @@ import MissionRoom from "@/pages/MissionRoom";
 import History from "@/pages/History";
 import WorkforcePage from "@/pages/WorkforcePage";
 import Credits from "@/pages/Credits";
+import ConnectWorkspace from "@/pages/ConnectWorkspace";
 import Layout from "@/components/Layout";
 
 function App() {
@@ -17,6 +18,7 @@ function App() {
             <Route path="/" element={<Dashboard />} />
             <Route path="/history" element={<History />} />
             <Route path="/workforce" element={<WorkforcePage />} />
+            <Route path="/connect" element={<ConnectWorkspace />} />
             <Route path="/credits" element={<Credits />} />
           </Route>
           <Route path="/mission/:id" element={<MissionRoom />} />

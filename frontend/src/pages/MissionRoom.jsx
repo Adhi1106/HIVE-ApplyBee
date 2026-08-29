@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams, Link } from "react-router-dom";
-import { ArrowLeft, Hexagon, FileCheck2, AlertTriangle, Loader2 } from "lucide-react";
+import { ArrowLeft, Hexagon, FileCheck2, AlertTriangle, Loader2, GitBranch, FolderTree } from "lucide-react";
 import { getMission } from "@/lib/api";
 import { MISSION_STATUS_META } from "@/lib/status";
 import MissionGraph from "@/components/mission/MissionGraph";
 import ActivityFeed from "@/components/mission/ActivityFeed";
 import WorkforcePanel from "@/components/mission/WorkforcePanel";
+import WorkspacePanel from "@/components/mission/WorkspacePanel";
 import ArtifactView from "@/components/mission/ArtifactView";
 
 const TERMINAL = ["verified", "failed"];
@@ -14,6 +15,7 @@ export default function MissionRoom() {
   const { id } = useParams();
   const [data, setData] = useState(null);
   const [showArtifact, setShowArtifact] = useState(false);
+  const [view, setView] = useState("graph");
   const artifactShown = useRef(false);
   const prevStatus = useRef(null);
   const timer = useRef(null);
@@ -34,6 +36,7 @@ export default function MissionRoom() {
         ) {
           artifactShown.current = true;
           setShowArtifact(true);
+          if (d.mission.type === "local") setView("workspace");
         }
         prevStatus.current = d.mission.status;
         if (!TERMINAL.includes(d.mission.status)) {
@@ -60,6 +63,7 @@ export default function MissionRoom() {
   const progress = mission?.status === "verified" ? 100 : Math.round((done / total) * 100);
   const meta = MISSION_STATUS_META[mission?.status] || MISSION_STATUS_META.planning;
   const recovering = mission?.status === "recovering" || tasks.some((t) => t.status === "needs_revision");
+  const isLocal = mission?.type === "local";
 
   return (
     <div className="h-screen flex flex-col bg-background overflow-hidden">
@@ -121,9 +125,31 @@ export default function MissionRoom() {
               />
             </div>
             <span className="text-xs font-mono text-zinc-400 w-10 text-right">{progress}%</span>
+            {isLocal && (
+              <div className="flex items-center gap-1 ml-2 rounded-full border border-zinc-800 p-0.5">
+                <button
+                  data-testid="view-graph-btn"
+                  onClick={() => setView("graph")}
+                  className={`flex items-center gap-1 text-xs px-3 py-1 rounded-full transition-colors ${view === "graph" ? "bg-zinc-800 text-white" : "text-zinc-500 hover:text-white"}`}
+                >
+                  <GitBranch className="w-3.5 h-3.5" /> Graph
+                </button>
+                <button
+                  data-testid="view-workspace-btn"
+                  onClick={() => setView("workspace")}
+                  className={`flex items-center gap-1 text-xs px-3 py-1 rounded-full transition-colors ${view === "workspace" ? "bg-zinc-800 text-white" : "text-zinc-500 hover:text-white"}`}
+                >
+                  <FolderTree className="w-3.5 h-3.5" /> Workspace
+                </button>
+              </div>
+            )}
           </div>
           <div className="flex-1 min-h-0 bg-[#0a0a0c]">
-            <MissionGraph mission={mission} tasks={tasks} />
+            {isLocal && view === "workspace" ? (
+              <WorkspacePanel artifact={data?.artifact} workspace={mission?.workspace} />
+            ) : (
+              <MissionGraph mission={mission} tasks={tasks} />
+            )}
           </div>
           <div className="h-[34%] shrink-0 border-t border-zinc-800 bg-zinc-950/80">
             <ActivityFeed events={events} />

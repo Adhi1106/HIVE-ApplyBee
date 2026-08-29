@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException
+from fastapi import FastAPI, APIRouter, HTTPException, WebSocket
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -7,8 +7,10 @@ import asyncio
 import logging
 from pathlib import Path
 
-from models import Mission, MissionCreate, now_iso
+from models import Mission, MissionCreate, LocalMissionCreate, now_iso
 from orchestrator import Orchestrator
+from local_orchestrator import LocalOrchestrator
+from runner_hub import hub
 from provider import provider
 
 ROOT_DIR = Path(__file__).parent
@@ -22,6 +24,7 @@ app = FastAPI(title="HIVE")
 api_router = APIRouter(prefix="/api")
 
 orchestrator = Orchestrator(db)
+local_orchestrator = LocalOrchestrator(db)
 
 DEFAULT_USER = "default-user"
 STARTING_CREDITS = 500
@@ -117,6 +120,77 @@ def _is_unsafe(goal: str) -> bool:
               "phishing", "keylogger", "bypass authentication", "delete all files",
               "rm -rf", "sql injection", "botnet", "crack password"]
     return any(b in g for b in banned)
+
+
+# ============================ HIVE Local Runner ============================
+DEMO_FILES = {
+    "app.py": "import os\nimport pandas as pd\nfrom model import predict\n\n\ndef main():\n    df = pd.read_csv('data.csv')\n    print(predict(df))\n\n\nif __name__ == '__main__':\n    main()\n",
+    "model.py": "import numpy as np\n\n\ndef predict(df):\n    return np.mean(df.select_dtypes('number').values)\n",
+    "data.csv": "id,value\n1,10\n2,20\n3,30\n",
+    "notes.txt": "TODO: clean up this project. Files are everywhere.\n",
+    "report.pdf": "%PDF-1.4 (placeholder report file)\nQuarterly summary.\n",
+    "README_old.md": "# Old Readme\nThis is outdated and messy.\n",
+}
+
+
+@api_router.websocket("/runner/ws")
+async def runner_ws(ws: WebSocket):
+    await hub.handle(ws)
+
+
+@api_router.post("/runner/pair")
+async def runner_pair():
+    s = hub.create_session()
+    return s.public()
+
+
+@api_router.get("/runner/session/{sid}")
+async def runner_session(sid: str):
+    s = hub.get(sid)
+    if not s:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return s.public()
+
+
+@api_router.post("/runner/session/{sid}/approve")
+async def runner_approve(sid: str):
+    if not hub.approve(sid):
+        raise HTTPException(status_code=400, detail="Runner not connected for this session.")
+    return hub.get(sid).public()
+
+
+@api_router.get("/runner/session/{sid}/tree")
+async def runner_tree(sid: str):
+    try:
+        return await hub.call_tool(sid, "list", {"path": "."})
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@api_router.post("/runner/session/{sid}/seed-demo")
+async def runner_seed_demo(sid: str):
+    s = hub.get(sid)
+    if not s or s.status != "approved":
+        raise HTTPException(status_code=400, detail="Approve a connected workspace first.")
+    for name, content in DEMO_FILES.items():
+        await hub.call_tool(sid, "write", {"path": name, "content": content})
+    return await hub.call_tool(sid, "list", {"path": "."})
+
+
+@api_router.post("/missions/local")
+async def create_local_mission(body: LocalMissionCreate):
+    s = hub.get(body.session_id)
+    if not s or s.status != "approved":
+        raise HTTPException(status_code=400, detail="Connect and approve a workspace runner first.")
+    await ensure_user()
+    u = await db.users.find_one({"id": DEFAULT_USER})
+    if (u or {}).get("credits", 0) <= 0:
+        raise HTTPException(status_code=402, detail="Out of credits.")
+    mission = Mission(goal=body.goal, user_id=DEFAULT_USER, type="local",
+                      session_id=body.session_id, workspace=s.workspace, provider="runner")
+    await db.missions.insert_one(mission.model_dump())
+    asyncio.create_task(local_orchestrator.run(mission.id, body.goal, body.session_id))
+    return {"id": mission.id, "status": mission.status}
 
 
 app.include_router(api_router)

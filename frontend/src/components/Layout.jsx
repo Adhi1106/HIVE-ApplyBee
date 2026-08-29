@@ -17,6 +17,7 @@ const HiveLogo = () => (
 
 const navItems = [
   { to: "/", label: "Missions", end: true },
+  { to: "/connect", label: "Runner" },
   { to: "/workforce", label: "Workforce" },
   { to: "/history", label: "Mission History" },
 ];

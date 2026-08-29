@@ -1,0 +1,8 @@
+# HIVE-generated
+__pycache__/
+*.py[cod]
+.env
+.venv/
+venv/
+.DS_Store
+*.log

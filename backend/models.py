@@ -31,6 +31,11 @@ class MissionCreate(BaseModel):
     goal: str
 
 
+class LocalMissionCreate(BaseModel):
+    session_id: str
+    goal: str = "Organize and prepare this project."
+
+
 # ---------- Document models ----------
 class Mission(BaseModel):
     id: str = Field(default_factory=new_id)
@@ -39,6 +44,9 @@ class Mission(BaseModel):
     title: str = ""
     summary: str = ""
     status: str = "planning"
+    type: str = "standard"  # standard | local
+    session_id: Optional[str] = None
+    workspace: Optional[str] = None
     required_capabilities: List[str] = Field(default_factory=list)
     credits_used: int = 0
     provider: str = "mock"  # "openai" or "mock"

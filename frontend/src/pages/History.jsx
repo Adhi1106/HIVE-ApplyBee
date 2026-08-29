@@ -40,7 +40,7 @@ export default function History() {
                   <div className="text-xs text-zinc-500 font-mono truncate mt-0.5">{m.goal}</div>
                 </div>
                 <span className="text-[11px] text-zinc-600 font-mono hidden sm:block">
-                  {m.provider === "openai" ? "live AI" : "mock"}
+                  {m.provider === "openai" ? "live AI" : m.provider === "runner" ? "local runner" : "mock"}
                 </span>
                 <span className={`text-xs px-3 py-1 rounded-full font-mono ${meta.cls}`}>{meta.label}</span>
                 <ArrowRight className="w-4 h-4 text-zinc-600 group-hover:text-sky-400 transition-colors" />

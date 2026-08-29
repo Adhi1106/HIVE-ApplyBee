@@ -40,3 +40,25 @@ review + deterministic controlled issue → identify responsible agent → recov
 - P1: SSE/websocket streaming instead of polling; per-task output drill-down panel.
 - P1: real auth + multi-user; persistent per-mission memory.
 - P2: subscriptions/billing, mission limits, workforce marketplace, integrations.
+
+## HIVE Local Runner — Real Local Execution (2026-08-29)
+- New separate executable `/app/hive_runner/runner.py`: connects OUTBOUND to backend
+  WebSocket `/api/runner/ws`, performs REAL file ops sandboxed to one approved workspace
+  (`Workspace._safe` blocks path traversal / outside access; no shell; git read-only).
+  Tools: list, read, write, mkdir, move/rename, copy, git_status, git_diff.
+- Backend `runner_hub.py`: manages ws sessions + pairing codes + tool RPC (call_tool with
+  correlation ids). Persistent demo session (code `HIVE-DEMO`, id `demo`). A supervised
+  `hive-runner` program runs a hosted demo runner on `/app/hive_demo_workspace`.
+- Backend `local_orchestrator.py`: the "Organize and prepare this project" mission. Dynamic
+  filesystem workforce (Mission Manager, Project Inspector, File Organizer, Structure Builder,
+  QA Reviewer). Real inspect → organize (by extension) + scaffold (README/requirements/.gitignore)
+  in parallel → validate detects one loose root file → routes to File Organizer → real move →
+  re-check → VERIFIED. Idempotent re-runs (scaffolded root files excluded from moves; requirements
+  computed from real sources before moving). Artifact stores real before_tree/after_tree/operations.
+- Routes: `/api/runner/pair|session/{sid}|/approve|/tree|/seed-demo`, `POST /api/missions/local`.
+- Frontend: `/connect` Connect Workspace flow (demo runner or pair-your-own with code + wss command,
+  permission review, approve, seed demo, run mission). Mission Room adds a Graph/Workspace toggle
+  and a real Before/After + operations `WorkspacePanel` for local missions. Existing UI untouched.
+- Verified end-to-end: real files moved on disk; recovery + verification shown; 35/35 backend tests pass.
+- Known MVP limits (future): runner sessions are in-memory (lost on backend restart; runner auto-reconnects,
+  approval must be re-granted); `/runner/pair` has no TTL/auth yet.

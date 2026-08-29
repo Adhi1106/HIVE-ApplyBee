@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
-import { ArrowRight, Loader2, Sparkles, Users, GitBranch } from "lucide-react";
+import { useNavigate, Link } from "react-router-dom";
+import { ArrowRight, Loader2, Sparkles, Users, GitBranch, HardDrive } from "lucide-react";
 import { createMission, getExamples } from "@/lib/api";
 import { toast } from "sonner";
 
@@ -100,6 +100,19 @@ export default function Dashboard() {
             ▸ Run the reliable demo mission (SaaS churn recovery)
           </button>
         )}
+
+        <Link
+          to="/connect"
+          data-testid="connect-workspace-cta"
+          className="mt-6 group flex items-center gap-3 rounded-xl border border-emerald-500/30 bg-emerald-500/5 hover:bg-emerald-500/10 p-4 transition-colors"
+        >
+          <HardDrive className="w-5 h-5 text-emerald-400 shrink-0" />
+          <div className="flex-1 min-w-0">
+            <div className="text-sm text-white font-medium">Run HIVE on your own files (Local Runner)</div>
+            <div className="text-xs text-zinc-400">Connect a workspace folder and let the workforce do real file operations — try "Organize and prepare this project".</div>
+          </div>
+          <ArrowRight className="w-4 h-4 text-emerald-400 group-hover:translate-x-0.5 transition-transform shrink-0" />
+        </Link>
 
         <div className="mt-14">
           <div className="flex items-center gap-2 text-zinc-500 text-xs font-mono uppercase tracking-widest mb-4">

@@ -1,0 +1,51 @@
+{
+  "summary": "Tested the NEW local-execution layer end-to-end. Backend: added /app/backend/tests/test_local_runner.py (13 tests) covering runner session/connectivity, approve, pairing (waiting session + 400 on approve/tree), seed-demo real file creation, local mission lifecycle to verified, dynamic filesystem workforce, real before/after trees + operations, deterministic recovery events + retry_count==1 on organize task, clean root via /tree, and sandbox path-traversal rejection (Workspace._safe unit-level: ../escape.txt, ../, /etc/passwd, move outside, unknown/private tool names all rejected). Full suite: 35/35 pass (includes iteration_1 standard AI-mission regression: live-AI missions still reach verified with dynamic workforce + artifact). Frontend: dashboard connect-workspace-cta -> /connect -> use-demo (already-approved fast path) / pair-own (pairing panel with wss URL + code) -> connected-panel + workspace-tree -> seed-demo (6 messy files visible) -> run-local-mission -> mission room; Graph/Workspace toggle, workspace-panel with Before/After trees + 16 workspace-op entries, activity feed shows the full recovery chain (REVISION_REQUIRED loose file -> routed to File Organizer -> real move -> re-check -> VERIFIED), mission-status=Verified, view-deliverable dialog opens, graph renders and all 5 agents show Done. Iteration_1 defects (graph fitView, artifact auto-open on revisit, specialists stuck Waiting) are all FIXED. One HIGH backend bug found: re-running the local mission on an already-organized workspace is not idempotent and corrupts the result.",
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "POST /api/missions/local (local_orchestrator._organize/_scaffold)", "issue": "NOT IDEMPOTENT on a re-run. _organize plans moves for ALL root files including the previously scaffolded README.md/requirements.txt/.gitignore (ALLOWED_ROOT_FILES is only used by the validator, not by the move planner). On a second mission over the same workspace they get moved to docs/README.md, docs/requirements.txt, misc/.gitignore, and because _organize runs concurrently (asyncio.gather) with _scaffold's writes of the same paths, the final root ends up MISSING requirements.txt while the mission still reports status=verified. Reproduced deterministically twice: after-tree = ['.gitignore','README.md','data/..','docs/README.md','docs/README_old.md','docs/notes.txt','docs/report.pdf','docs/requirements.txt','misc/.gitignore','src/..'] (no root requirements.txt). Fix: skip ALLOWED_ROOT_FILES in the move plan (and ideally sequence scaffold after organize, or exclude scaffold targets from moves).", "priority": "HIGH"}
+    ],
+    "minor": [
+      {"endpoint": "GET/POST /api/runner/session/*", "issue": "RunnerHub state is in-memory only: a backend reload/restart resets the demo session to 'connected' (approval lost) or briefly to 'waiting' until the runner reconnects (~2s). During that window POST /api/missions/local, /seed-demo and /tree return 400. Test had to add a retry loop for the reconnect window. Consider persisting session/approval state."},
+      {"endpoint": "POST /api/runner/pair", "issue": "Unbounded growth: every call permanently adds a Session to hub.sessions/by_code with no TTL/cleanup (memory leak). Pairing codes are 6 hex chars and /approve has no auth — any caller who guesses a code/session id can approve a workspace."},
+      {"endpoint": "GET /api/missions", "issue": "Stale record: one local mission is status=failed with error \"RunnerHub.call_tool() got an unexpected keyword argument 'session_id'\" (from pre-fix dev code, not reproducible now). It renders as a red 'Failed' card in Mission History."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "History.jsx (provider badge)", "issue": "Local runner missions (mission.provider === 'runner') are labelled 'mock' because the badge is `m.provider === 'openai' ? 'live AI' : 'mock'`. Real local-execution missions must not be shown as mock — show 'local runner'.", "selector": "History mission card provider badge", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Mission Room — Graph view", "issues": ["A small unstyled WHITE rectangle (~20x60px, React Flow controls/minimap) sits at the bottom-left of the dark graph pane — jarring on the dark theme and partially clipped."]},
+      {"screen": "/connect", "issues": ["When the demo session is already approved the flow jumps straight to CONNECTED, so the permissions review step (permissions-panel/approve-workspace-btn) cannot be re-exercised from the UI; the stepper still shows 'Review permissions' as completed. Not a bug, but the approval UI path was only verified via API + code (backend returns approved=true)."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_local_runner.py",
+    "/app/backend/tests/test_mission_lifecycle.py",
+    "/app/backend/tests/test_dynamic_workforce.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "HIGH: make the local mission idempotent — exclude README.md/requirements.txt/.gitignore (ALLOWED_ROOT_FILES) from the organize move plan and avoid the organize/scaffold write-vs-move race, so a re-run always ends with README.md + requirements.txt + .gitignore at root and no docs/README.md, docs/requirements.txt, misc/.gitignore junk.",
+    "Show 'local runner' (not 'mock') for provider==='runner' missions in History (and anywhere else the provider badge is rendered).",
+    "Style the React Flow controls for the dark theme (white box at bottom-left of the graph pane).",
+    "Consider persisting runner session/approval (currently lost on backend restart) and adding TTL/cleanup + auth for /api/runner/pair + /approve.",
+    "Optional: purge the stale failed local mission record from the DB."
+  ],
+  "critical_code_review_comments": [
+    "local_orchestrator._organize moves every root file; ALLOWED_ROOT_FILES is only consulted in _validate — the planner and validator use different notions of 'allowed at root', which is the root cause of the non-idempotent re-run.",
+    "_organize and _scaffold are gathered concurrently but touch the same paths (requirements.txt/README.md/.gitignore); there is no ordering guarantee, so the outcome depends on timing.",
+    "_validate raises RuntimeError if the workspace is still dirty after the fix, which fails the whole mission with a generic MISSION_BLOCKED — a second recovery attempt or a clearer user-facing error would be better.",
+    "runner_hub.call_tool has a 30s timeout but no keepalive/ping from the server side; a silently dead ws is only detected on the next tool call (raises 'runner not connected' -> mission failed).",
+    "Runner sandbox looks correct: Workspace._safe resolves and requires root membership; dispatch blocks private/unknown tools; git is invoked with a fixed argv (no shell). Verified by tests for ../, absolute paths and dispatch('shell')."
+  ],
+  "updated_files": ["/app/backend/tests/test_local_runner.py"],
+  "success_rate": {"backend": "97% (34/35 assertions-suites pass; 1 HIGH idempotency bug found outside the pytest happy path, reproduced via API)", "frontend": "95% (all new local flows work; 1 badge bug + 1 dark-theme nit)"},
+  "seed_data_creation": "Seeded /app/hive_demo_workspace via POST /api/runner/session/demo/seed-demo (app.py, model.py, data.csv, notes.txt, report.pdf, README_old.md) and ran ~5 local missions + regression AI missions. Workspace was reset (rm of src/data/docs/misc + scaffolded root files) before runs to get a clean baseline.",
+  "should_call_test_agent_after_fix": true,
+  "should_main_agent_self_test": false,
+  "test_credentials": "N/A — no auth; /app/memory/test_credentials.md not present and not needed.",
+  "context_for_next_testing_agent": "New suite: /app/backend/tests/test_local_runner.py (classes pinned with @pytest.mark.xdist_group('runner_ws') because TestRunnerSession's seed-demo otherwise races TestLocalMission on the single shared demo workspace under -n 2 loadscope). IMPORTANT: editing files under /app/backend/tests triggers uvicorn hot-reload which wipes RunnerHub in-memory state — wait ~5-10s after edits before hitting runner endpoints. To reproduce the idempotency bug: seed-demo + POST /api/missions/local twice in a row WITHOUT clearing the workspace; second run's after_tree loses root requirements.txt and gains docs/README.md, docs/requirements.txt, misc/.gitignore. Reset baseline with: rm -rf /app/hive_demo_workspace/{src,data,docs,misc,README.md,requirements.txt,.gitignore}. After the fix, re-run the local mission TWICE on the same workspace and assert root == {README.md, requirements.txt, .gitignore}.",
+  "rca_of_the_issue": "Idempotency bug RCA: local_orchestrator._run builds `moves` from ALL loose root files returned by the runner's list, including the README.md/requirements.txt/.gitignore that a previous mission scaffolded (ALLOWED_ROOT_FILES is only applied in the validator). Meanwhile _organize (moves) and _scaffold (writes those same three files) run in the same asyncio.gather, so the write can land before the move executes; the move then relocates the freshly-written file into docs//misc/. The reviewer's stray check then passes because docs/... paths are not root files, so the mission is marked verified while the real workspace lacks requirements.txt at root and contains duplicate docs/README.md and misc/.gitignore."
+}
