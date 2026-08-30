@@ -269,10 +269,20 @@ async def runner_seed_demo(sid: str):
 
 @api_router.get("/runner/download")
 async def runner_download():
-    """Serve the CURRENT, real persistent runner.py so users never run a stale stub."""
+    """Serve the CURRENT, real persistent runner.py so users never run a stale stub.
+    No-store headers guarantee the browser never hands back a cached old file."""
     from fastapi.responses import FileResponse
     path = ROOT_DIR.parent / "hive_runner" / "runner.py"
-    return FileResponse(str(path), media_type="text/x-python", filename="runner.py")
+    return FileResponse(
+        str(path), media_type="text/x-python", filename="runner.py",
+        headers={"Cache-Control": "no-store, no-cache, must-revalidate", "Pragma": "no-cache"},
+    )
+
+
+@api_router.get("/runner/version")
+async def runner_version():
+    from runner_hub import MIN_RUNNER
+    return {"latest": ".".join(str(x) for x in MIN_RUNNER)}
 
 
 @api_router.post("/missions/local")

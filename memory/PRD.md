@@ -123,3 +123,20 @@ review + deterministic controlled issue → identify responsible agent → recov
   Runner connected / session-expired(404) with a "Generate a new pairing code" re-pair action.
 - VERIFIED externally against live preview: WS upgrade OK, handshake OK, poll connected=true 60s, approve pushes to
   runner, backend RPC tool_call reaches runner, AND code stays valid across a backend restart.
+
+## 2026-08-30 (2) — Runner instant-exit fixed (websockets 14+ breaking change)
+- ROOT CAUSE of "prints message then returns to prompt": runner used `async for conn in websockets.connect(...)`
+  auto-reconnect. In websockets >=14 (users `pip install` gets 16.x) that helper only retries TRANSIENT network
+  errors by default, so on any clean/non-transient close the loop ENDED and the process exited.
+- FIX runner (`runner.py` v1.2.0): replaced with a MANUAL `while` reconnect loop using `async with connect()`
+  (compatible websockets 10->16). Never exits except Ctrl+C or a fatal/expired code. Added [HIVE] status logs
+  (connecting/connected/authenticated/executing/completed/failed/disconnected/reconnecting), graceful SIGINT/SIGTERM,
+  exponential backoff, absolute-path + traversal rejection, `--version`.
+- FIX backend: version gate (`MIN_RUNNER=1.2.0`) rejects stale runners with a fatal "re-download" message;
+  GET /api/runner/download now sends no-store headers; added GET /api/runner/version.
+- FIX frontend: Connect page shows a Runner v1.2 re-download note.
+- PROVEN end-to-end by launching the REAL runner.py subprocess against the external wss URL: connected in 1s,
+  process STAYED ALIVE, seed-demo wrote 6 real files to disk THROUGH the runner, backend restart -> runner
+  AUTO-RECONNECTED in 1s with approval preserved (persisted session). RESULT: PASS.
+- NOT done this turn (user said prioritize runner first): Workforce page cleanup (#14), Mission History polish (#15),
+  real auth (#16), credits/subscription tiers polish (#17). These remain backlog.

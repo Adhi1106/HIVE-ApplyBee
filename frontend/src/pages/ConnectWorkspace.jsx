@@ -103,6 +103,7 @@ export default function ConnectWorkspace() {
     return `python3 ./runner.py --server "${server}" --code "${code}" --workspace "${ws}"`;
   };
   const cmd = buildCmd();
+  const ver = "1.2";
   const downloadUrl = `${API}/runner/download`;
 
   const step = session?.approved ? 3 : session?.connected ? 2 : 1;
@@ -181,6 +182,9 @@ export default function ConnectWorkspace() {
               </div>
               <pre data-testid="runner-command" className="bg-zinc-950 border border-zinc-800 rounded-lg p-3 text-[12px] text-zinc-300 font-mono overflow-x-auto whitespace-pre-wrap">{cmd}</pre>
               <div className="text-xs text-zinc-500 mt-2">Pairing code: <span className="text-sky-400 font-mono">{session.code}</span> · you'll approve the exact folder next.</div>
+              <div className="text-[11px] text-amber-400/80 mt-2 flex items-center gap-1" data-testid="runner-version-note">
+                Runner v{ver} required — always re-download to replace any older <span className="font-mono">runner.py</span>. It stays running and prints <span className="font-mono">[HIVE] Runner connected</span>; leave that terminal open.
+              </div>
             </div>
           )}
 

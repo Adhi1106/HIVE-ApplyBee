@@ -28,6 +28,14 @@ def _now() -> str:
 
 DEMO_CODE = "HIVE-DEMO"
 DEMO_SESSION = "demo"
+MIN_RUNNER = (1, 2, 0)  # runners older than this must re-download
+
+
+def _ver_tuple(v: str):
+    try:
+        return tuple(int(x) for x in (v or "0").split(".")[:3])
+    except Exception:  # noqa: BLE001
+        return (0,)
 
 
 class Session:
@@ -224,6 +232,15 @@ class RunnerHub:
                 t = msg.get("type")
                 if t == "register":
                     code = (msg.get("code") or "").strip()
+                    rv = _ver_tuple(msg.get("version"))
+                    if rv < MIN_RUNNER:
+                        min_s = ".".join(str(x) for x in MIN_RUNNER)
+                        logger.warning(f"register rejected: runner version {msg.get('version')} < {min_s}")
+                        await ws.send_json({
+                            "type": "error", "fatal": True, "code": "version_incompatible",
+                            "error": f"This runner (v{msg.get('version') or '?'}) is out of date. "
+                                     f"Download the latest runner.py (v{min_s}+) from the HIVE browser and re-run."})
+                        continue
                     session = await self._get_by_code(code)
                     if not session:
                         logger.warning(f"register rejected: unknown code '{code}'")

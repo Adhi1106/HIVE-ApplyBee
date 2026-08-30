@@ -6,14 +6,16 @@ A small, standalone service that runs on the USER'S computer. It connects
 outbound to the HIVE backend over a WebSocket and performs REAL filesystem
 operations, strictly sandboxed to a single user-approved workspace folder.
 
+It stays alive after connecting and keeps listening for tasks until you press
+Ctrl+C. It reconnects automatically if the connection drops.
+
 Safety:
   * Every path is resolved and confirmed to live inside the approved workspace.
   * No access to files outside the workspace, no credentials, no arbitrary shell.
   * Git is read-only (status/diff) via a fixed argument list, never a shell.
 
-Usage:
-  python runner.py --server ws://localhost:8001/api/runner/ws \
-                   --code ABC123 --workspace /path/to/your/project
+Usage (one line):
+  python runner.py --server "wss://YOUR-HOST/api/runner/ws" --code ABC123 --workspace "C:\\path\\to\\folder"
 
 Environment fallbacks: HIVE_RUNNER_SERVER, HIVE_RUNNER_CODE, HIVE_RUNNER_WORKSPACE
 """
@@ -23,11 +25,14 @@ import json
 import os
 import platform
 import shutil
+import signal
 import subprocess
 import sys
 from pathlib import Path
 
 import websockets
+
+VERSION = "1.2.0"
 
 CAPABILITIES = [
     "list", "read", "write", "mkdir", "move", "copy", "rename", "git_status", "git_diff",
@@ -41,13 +46,21 @@ PERMISSIONS = [
 MAX_READ = 200_000  # bytes
 
 
+def log(msg: str):
+    print(f"[HIVE] {msg}", flush=True)
+
+
 class Workspace:
     def __init__(self, root: str):
         self.root = Path(root).expanduser().resolve()
         self.root.mkdir(parents=True, exist_ok=True)
 
     def _safe(self, rel: str) -> Path:
-        p = (self.root / (rel or "")).resolve()
+        # Reject absolute paths and any escape outside the approved workspace.
+        rel = rel or ""
+        if os.path.isabs(rel) or (len(rel) > 1 and rel[1] == ":"):
+            raise ValueError(f"absolute paths are not allowed: '{rel}'")
+        p = (self.root / rel).resolve()
         if p != self.root and self.root not in p.parents:
             raise ValueError(f"path '{rel}' is outside the approved workspace")
         return p
@@ -104,7 +117,6 @@ class Workspace:
         return {"from": kw["from"], "to": kw["to"]}
 
     def delete(self, path=None, authorized=False, **kw):
-        # Destructive: requires explicit authorization from HIVE.
         if not authorized:
             raise ValueError("delete requires explicit authorization")
         p = self._safe(path)
@@ -163,80 +175,115 @@ async def _heartbeat(conn):
         return
 
 
-async def run(server, code, workspace):
+async def _serve(conn, ws_env, code):
+    """Handle one live connection. Returns 'fatal' to stop reconnecting,
+    or 'retry' when the connection ended and we should reconnect."""
+    log("WebSocket connected")
+    log(f"Pairing with code: {code}")
+    await conn.send(json.dumps({
+        "type": "register",
+        "code": code,
+        "workspace": str(ws_env.root),
+        "machine": platform.node() or "local",
+        "os": platform.system(),
+        "version": VERSION,
+        "capabilities": CAPABILITIES,
+        "permissions": PERMISSIONS,
+    }))
+
+    registered = False
+    hb = None
+    try:
+        async for raw in conn:
+            msg = json.loads(raw)
+            t = msg.get("type")
+
+            if t == "registered":
+                registered = True
+                hb = asyncio.ensure_future(_heartbeat(conn))
+                log("Authentication successful")
+                log("Runner connected \u2713")
+                if msg.get("approved"):
+                    log("Workspace already approved. Waiting for tasks...")
+                else:
+                    log("Go to your HIVE browser tab — it now shows 'Runner connected'.")
+                    log("Approve this workspace there, then send a task.")
+                    log("Waiting for tasks...")
+
+            elif t == "error":
+                log("PAIRING FAILED: " + str(msg.get("error")))
+                if msg.get("fatal"):
+                    log("-> Generate a fresh pairing code in the HIVE browser and re-run this command.")
+                    return "fatal"
+
+            elif t == "approved":
+                log("Workspace approved by user \u2713. Waiting for tasks...")
+
+            elif t == "tool_call":
+                if not registered:
+                    continue
+                call_id = msg["id"]
+                tool = msg.get("tool")
+                args = msg.get("args") or {}
+                tgt = args.get("path") or args.get("to") or ""
+                log(f"Task received: {tool} {tgt}".rstrip())
+                log("Workspace validation: OK")
+                log("Executing...")
+                try:
+                    result = ws_env.dispatch(tool, args)
+                    await conn.send(json.dumps({"type": "tool_result", "id": call_id, "ok": True, "result": result}))
+                    log(f"Completed \u2713 ({tool} {tgt})".rstrip())
+                except Exception as e:  # noqa: BLE001
+                    await conn.send(json.dumps({"type": "tool_result", "id": call_id, "ok": False, "error": str(e)}))
+                    log(f"Failed \u2717 {tool}: {e}")
+                log("Waiting for tasks...")
+
+            elif t == "heartbeat_ack":
+                pass
+    finally:
+        if hb:
+            hb.cancel()
+    return "retry"
+
+
+async def run(server, code, workspace, stop_event):
     ws_env = Workspace(workspace)
-    print("=" * 56)
-    print("  HIVE Local Runner  v1.1.0")
-    print("=" * 56)
-    print(f"OS        : {platform.system()} ({platform.release()})")
-    print(f"Workspace : {ws_env.root}")
-    print(f"Server    : {server}")
-    print(f"Code      : {code}")
-    print("-" * 56)
-    print("Connecting to HIVE...")
-    async for conn in websockets.connect(server, ping_interval=20, ping_timeout=20, max_size=8_000_000):
-        hb = None
+    print("=" * 60)
+    print(f"  HIVE Local Runner  v{VERSION}")
+    print("=" * 60)
+    log(f"OS        : {platform.system()} ({platform.release()})")
+    log(f"Workspace : {ws_env.root}")
+    log(f"Server    : {server}")
+    log(f"Code      : {code}")
+    print("-" * 60)
+
+    backoff = 2
+    while not stop_event.is_set():
         try:
-            print("Socket open. Sending pairing handshake...")
-            await conn.send(json.dumps({
-                "type": "register",
-                "code": code,
-                "workspace": str(ws_env.root),
-                "machine": platform.node() or "local",
-                "os": platform.system(),
-                "version": "1.1.0",
-                "capabilities": CAPABILITIES,
-                "permissions": PERMISSIONS,
-            }))
-            # Wait for the server to actually confirm the pairing BEFORE we
-            # claim to be connected. This is the real handshake.
-            registered = False
-            async for raw in conn:
-                msg = json.loads(raw)
-                t = msg.get("type")
-                if t == "registered":
-                    registered = True
-                    hb = asyncio.ensure_future(_heartbeat(conn))
-                    print("\u2713 Paired with HIVE.")
-                    print("\u2713 Runner connected. Go back to your browser — it should now say 'Runner connected'.")
-                    if msg.get("approved"):
-                        print("\u2713 Workspace already approved. Waiting for tasks...")
-                    else:
-                        print("Waiting for you to approve this workspace in the browser...")
-                elif t == "error":
-                    print("\u2717 PAIRING FAILED: " + str(msg.get("error")))
-                    if msg.get("fatal"):
-                        print("  -> Fix: generate a fresh pairing code in the browser and re-run this command.")
-                        return
-                elif t == "approved":
-                    print("\u2713 Workspace approved by user. Waiting for tasks...")
-                elif t == "tool_call":
-                    if not registered:
-                        continue
-                    call_id = msg["id"]
-                    tool = msg.get("tool")
-                    args = msg.get("args") or {}
-                    tgt = args.get("path") or args.get("to") or ""
-                    print(f"Task received -> {tool} {tgt}".rstrip())
-                    try:
-                        result = ws_env.dispatch(tool, args)
-                        await conn.send(json.dumps({"type": "tool_result", "id": call_id, "ok": True, "result": result}))
-                        print(f"  \u2713 completed  ({tool} {tgt})".rstrip())
-                    except Exception as e:  # noqa: BLE001
-                        await conn.send(json.dumps({"type": "tool_result", "id": call_id, "ok": False, "error": str(e)}))
-                        print(f"  \u2717 {tool}: {e}")
-                    print("Waiting for tasks...")
-                elif t == "heartbeat_ack":
-                    pass
-        except websockets.ConnectionClosed:
-            print("Connection lost. Reconnecting...")
-            await asyncio.sleep(2)
+            log("Connecting to HIVE...")
+            # Manual reconnect loop — compatible across websockets 10 -> 16.
+            async with websockets.connect(
+                server, ping_interval=20, ping_timeout=20, max_size=8_000_000
+            ) as conn:
+                backoff = 2  # reset after a successful connect
+                outcome = await _serve(conn, ws_env, code)
+                if outcome == "fatal":
+                    return
+            log("Disconnected. Reconnecting...")
+        except asyncio.CancelledError:
+            break
+        except (OSError, websockets.exceptions.WebSocketException) as e:
+            log(f"Connection failed: {e}")
+            log(f"Reconnecting in {backoff}s... (Ctrl+C to stop)")
         except Exception as e:  # noqa: BLE001
-            print(f"Error: {e}. Reconnecting...")
-            await asyncio.sleep(2)
-        finally:
-            if hb:
-                hb.cancel()
+            log(f"Unexpected error: {e}")
+            log(f"Reconnecting in {backoff}s... (Ctrl+C to stop)")
+        # wait with the ability to break out immediately on shutdown
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=backoff)
+        except asyncio.TimeoutError:
+            pass
+        backoff = min(backoff * 2, 30)
 
 
 def main():
@@ -248,11 +295,24 @@ def main():
     ap.add_argument("--server", default=os.environ.get("HIVE_RUNNER_SERVER", "ws://localhost:8001/api/runner/ws"))
     ap.add_argument("--code", default=os.environ.get("HIVE_RUNNER_CODE", "HIVE-DEMO"))
     ap.add_argument("--workspace", default=os.environ.get("HIVE_RUNNER_WORKSPACE", str(Path.home() / "hive_workspace")))
+    ap.add_argument("--version", action="version", version=f"HIVE Local Runner v{VERSION}")
     a = ap.parse_args()
+
+    async def _amain():
+        stop_event = asyncio.Event()
+        loop = asyncio.get_event_loop()
+        # graceful shutdown on SIGINT/SIGTERM where supported (POSIX)
+        for sig in ("SIGINT", "SIGTERM"):
+            try:
+                loop.add_signal_handler(getattr(signal, sig), stop_event.set)
+            except (NotImplementedError, AttributeError):
+                pass  # Windows: fall back to KeyboardInterrupt below
+        await run(a.server, a.code, a.workspace, stop_event)
+
     try:
-        asyncio.run(run(a.server, a.code, a.workspace))
+        asyncio.run(_amain())
     except KeyboardInterrupt:
-        print("\n[HIVE Runner] stopped.")
+        log("Stopped by user (Ctrl+C).")
 
 
 if __name__ == "__main__":
