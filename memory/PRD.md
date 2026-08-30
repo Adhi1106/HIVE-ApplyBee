@@ -140,3 +140,18 @@ review + deterministic controlled issue → identify responsible agent → recov
   AUTO-RECONNECTED in 1s with approval preserved (persisted session). RESULT: PASS.
 - NOT done this turn (user said prioritize runner first): Workforce page cleanup (#14), Mission History polish (#15),
   real auth (#16), credits/subscription tiers polish (#17). These remain backlog.
+
+## 2026-08-30 (3) — Runner diagnostics + deterministic explicit tasks + cross-platform paths
+- The mystery "HIVE local workspace is working!" string exists NOWHERE in repo/git → user was launching an OLD
+  runner.py from inside HIVE-Test (not the fresh download). Made this obvious + diagnosable instead of guessing.
+- Backend: added GET /api/runner/debug (live connected runners + rolling log of last register attempts with
+  code/workspace/os/version/ok/reason). runner_hub records every attempt (registered / invalid_code / version_incompatible).
+- Runner v1.2.0 banner now prints the ABSOLUTE file path being executed, cwd, python & websockets versions, and an
+  explicit warning that if it prints "HIVE local workspace is working!" and exits, it's the wrong/old file.
+- Frontend: Connect page shows a live "Connection diagnostics" panel while waiting (how many runners the backend sees,
+  each recent attempt, flags codes from other tabs). Task inputs no longer disabled on empty workspaces.
+- Orchestrator: added deterministic parse_explicit_ops() — explicit "create file X containing Y" / "folder called Z /
+  file inside it" is executed WITHOUT the LLM (was unreliable; the AI mis-created a folder as a file). Executes mkdirs
+  then nested writes. Runner list() now returns POSIX-style paths so verification matches on Windows.
+- VERIFIED end-to-end (real runner subprocess, external wss, empty workspace): BOTH acceptance tasks now VERIFIED on
+  disk — hive_test.txt="HIVE LOCAL TEST SUCCESS" and HIVE-Demo/test.txt="Created by HIVE". ACCEPTANCE: PASS.

@@ -285,6 +285,14 @@ async def runner_version():
     return {"latest": ".".join(str(x) for x in MIN_RUNNER)}
 
 
+@api_router.get("/runner/debug")
+async def runner_debug():
+    """Live diagnostics: which runners are actually connected to the backend and
+    the last register attempts (so we can tell 'never reached backend' vs
+    'wrong code' vs 'old version' vs 'connected')."""
+    return hub.debug()
+
+
 @api_router.post("/missions/local")
 async def create_local_mission(body: LocalMissionCreate):
     s = await hub.get(body.session_id)

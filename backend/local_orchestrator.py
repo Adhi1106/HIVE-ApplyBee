@@ -7,6 +7,7 @@ actual filesystem, not a simulation.
 from __future__ import annotations
 import asyncio
 import logging
+import re
 from typing import Dict, Any, List
 
 from models import Agent, Task, Artifact, Review, now_iso
@@ -38,6 +39,36 @@ def _folder_for(name: str) -> str:
     dot = name.rfind(".")
     ext = name[dot:].lower() if dot >= 0 else ""
     return EXT_MAP.get(ext, "misc")
+
+
+def parse_explicit_ops(goal: str):
+    """Deterministically extract explicit 'create file/folder' instructions so
+    simple, precise tasks never depend on the LLM. Returns a plan dict or None."""
+    folder = None
+    mf = re.search(r'(?:folder|directory)\s+(?:called|named|")\s*["\u201c\']?([A-Za-z0-9_.\- ]+?)["\u201d\']?(?:\s|,|\.|$|\sand\b)', goal, re.I)
+    if mf:
+        folder = mf.group(1).strip().rstrip(".")
+    nest = bool(re.search(r'inside\s+(?:it|that|the folder)|within\s+it|in\s+it\b|inside\b', goal, re.I)) and folder
+
+    creates = []
+    file_re = re.compile(
+        r'(?:file\s+(?:called|named)\s+)?["\u201c\']?([A-Za-z0-9_.\-/]+\.[A-Za-z0-9]+)["\u201d\']?'
+        r'(?:\s+(?:inside|in|within)\s+(?:it|that|the\s+folder|the\s+directory))?'
+        r'\s+(?:containing|with(?:\s+the)?(?:\s+content|\s+text)?|that\s+says|saying|:)\s+'
+        r'(?:["\u201c\']([^"\u201d\']+)["\u201d\']|([^."\n]+))',
+        re.I,
+    )
+    for m in file_re.finditer(goal):
+        name = m.group(1).strip()
+        content = (m.group(2) if m.group(2) is not None else m.group(3) or "").strip()
+        path = f"{folder}/{name}" if (nest and "/" not in name) else name
+        creates.append({"path": path, "content": content})
+
+    if not creates and not folder:
+        return None
+    parts = ([f"folder {folder}"] if folder else []) + [c["path"] for c in creates]
+    return {"summary": "Created " + ", ".join(parts) + " as requested.",
+            "creates": creates, "mkdirs": [folder] if folder else []}
 
 
 class LocalOrchestrator:
@@ -366,8 +397,15 @@ class LocalOrchestrator:
         await self.o.set_agent(doer, status="working", current_task_id=t_do["id"])
         await self.o.emit(mission_id, "WORKER_STARTED", f"{drole} started: {goal[:50]}.", actor=drole, task_id=t_do["id"], worker_id=doer["id"], worker_name=doer["name"], worker_role=drole, input_summary=goal)
         ops_plan = None
+        mkdirs = []
         files_blob = "\n\n".join(f"### {k}\n{v}" for k, v in contents.items()) or "(no readable files)"
-        if await self.o._spend_ai(mission_id, 3):
+        # Deterministic path first: explicit 'create file/folder ...' never depends on the LLM.
+        explicit = parse_explicit_ops(goal)
+        if explicit:
+            ops_plan = {"summary": explicit["summary"], "creates": explicit["creates"], "modifies": []}
+            mkdirs = explicit.get("mkdirs", [])
+            await self.o.emit(mission_id, "WORKER_STARTED", f"{drole} parsed an explicit instruction (no guesswork needed).", actor=drole, task_id=t_do["id"], worker_id=doer["id"], worker_role=drole)
+        if not ops_plan and await self.o._spend_ai(mission_id, 3):
             try:
                 sysp = (f"You are {dname}, a {drole}, a specialist inside a coordinated HIVE AI workforce operating in LOCAL mode. "
                         "You do NOT access the user's computer directly; you request controlled file operations through the approved Local Runner, "
@@ -392,6 +430,11 @@ class LocalOrchestrator:
                             "creates": [{"path": "OUTPUT.txt", "content": f"HIVE was asked to: {goal}\n"}], "modifies": []}
 
         created = []
+        for d in mkdirs:
+            if self._safe_rel(d):
+                await self._tool(mission_id, drole, t_do["id"], "mkdir", {"path": d}, f"create folder {d}")
+                created.append(d)
+                await asyncio.sleep(0.1)
         for item in (ops_plan.get("creates", []) + ops_plan.get("modifies", [])):
             path = item.get("path", "")
             if not self._safe_rel(path):

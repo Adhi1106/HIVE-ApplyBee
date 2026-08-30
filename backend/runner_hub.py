@@ -129,11 +129,27 @@ class RunnerHub:
         self.by_code: Dict[str, str] = {}           # code -> sid (cache)
         self.conns: Dict[str, WebSocket] = {}       # runner_id -> ws (RAM only)
         self.pending: Dict[str, asyncio.Future] = {}
+        self.recent: list = []                       # rolling log of register attempts
         self.db = None
         # persistent demo session so a hosted runner can always attach
         demo = Session(DEMO_SESSION, DEMO_CODE)
         self.sessions[DEMO_SESSION] = demo
         self.by_code[DEMO_CODE] = DEMO_SESSION
+
+    def _record(self, entry: dict):
+        entry["at"] = _now()
+        self.recent.insert(0, entry)
+        del self.recent[25:]
+
+    def debug(self) -> Dict[str, Any]:
+        connected = []
+        for rid, _ws in self.conns.items():
+            for s in self.sessions.values():
+                if s.runner_id == rid:
+                    connected.append({"code": s.code, "workspace": s.workspace,
+                                      "os": s.os, "version": s.version, "machine": s.machine,
+                                      "connected_at": s.connected_at, "last_heartbeat": s.last_heartbeat})
+        return {"connected_runners": connected, "recent_attempts": self.recent}
 
     def attach_db(self, db):
         self.db = db
@@ -236,6 +252,8 @@ class RunnerHub:
                     if rv < MIN_RUNNER:
                         min_s = ".".join(str(x) for x in MIN_RUNNER)
                         logger.warning(f"register rejected: runner version {msg.get('version')} < {min_s}")
+                        self._record({"code": code, "workspace": msg.get("workspace"), "os": msg.get("os"),
+                                      "version": msg.get("version"), "ok": False, "reason": "version_incompatible"})
                         await ws.send_json({
                             "type": "error", "fatal": True, "code": "version_incompatible",
                             "error": f"This runner (v{msg.get('version') or '?'}) is out of date. "
@@ -244,6 +262,8 @@ class RunnerHub:
                     session = await self._get_by_code(code)
                     if not session:
                         logger.warning(f"register rejected: unknown code '{code}'")
+                        self._record({"code": code, "workspace": msg.get("workspace"), "os": msg.get("os"),
+                                      "version": msg.get("version"), "ok": False, "reason": "invalid_code"})
                         await ws.send_json({
                             "type": "error", "fatal": True, "code": "invalid_code",
                             "error": f"Pairing code '{code}' is not recognized. "
@@ -263,6 +283,8 @@ class RunnerHub:
                     self.conns[runner_id] = ws
                     session.live = True
                     await self._persist(session)
+                    self._record({"code": code, "workspace": session.workspace, "os": session.os,
+                                  "version": session.version, "ok": True, "reason": "registered"})
                     await ws.send_json({
                         "type": "registered", "runner_id": runner_id,
                         "session_id": session.id, "approved": session.approved})

@@ -6,7 +6,7 @@ import {
 import { toast } from "sonner";
 import {
   runnerPair, runnerSession, runnerApprove, runnerTree, runnerSeedDemo,
-  createLocalMission, runnerWsUrl, API,
+  createLocalMission, runnerWsUrl, runnerDebug, API,
 } from "@/lib/api";
 
 export default function ConnectWorkspace() {
@@ -19,7 +19,9 @@ export default function ConnectWorkspace() {
   const [term, setTerm] = useState("powershell");
   const [error, setError] = useState(null);
   const [waited, setWaited] = useState(0);
+  const [diag, setDiag] = useState(null);
   const timer = useRef(null);
+  const dtimer = useRef(null);
   const navigate = useNavigate();
 
   const startPolling = (id) => {
@@ -49,6 +51,16 @@ export default function ConnectWorkspace() {
     clearTimeout(timer.current);
     poll();
   };
+
+  // Live backend diagnostics: shows whether ANY runner reached the backend.
+  const pollDiag = async () => {
+    try { setDiag(await runnerDebug()); } catch (e) {}
+    dtimer.current = setTimeout(pollDiag, 2500);
+  };
+  useEffect(() => {
+    pollDiag();
+    return () => clearTimeout(dtimer.current);
+  }, []);
 
   useEffect(() => () => clearTimeout(timer.current), []);
 
@@ -225,6 +237,33 @@ export default function ConnectWorkspace() {
             )}
           </div>
 
+          {!session.connected && diag && (
+            <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-4" data-testid="runner-diagnostics">
+              <div className="text-xs font-mono uppercase tracking-widest text-zinc-500 mb-2">Connection diagnostics</div>
+              <div className="text-xs text-zinc-400 mb-2">
+                Backend currently sees <span className="text-white font-semibold">{(diag.connected_runners || []).length}</span> connected runner(s).
+                {" "}This tab is waiting for code <span className="text-sky-400 font-mono">{session.code}</span>.
+              </div>
+              {(diag.recent_attempts || []).length === 0 ? (
+                <div className="text-xs text-zinc-600">No runner has contacted the backend yet. Make sure the terminal shows <span className="font-mono text-zinc-400">[HIVE] WebSocket connected</span> and stays open — if it printed <span className="font-mono">HIVE local workspace is working!</span> and exited, you ran an old runner.py.</div>
+              ) : (
+                <div className="space-y-1" data-testid="recent-attempts">
+                  {(diag.recent_attempts || []).slice(0, 5).map((a, i) => {
+                    const mismatch = a.code && a.code !== session.code;
+                    return (
+                      <div key={i} className="text-[11px] font-mono flex flex-wrap items-center gap-x-3 gap-y-0.5">
+                        <span className={a.ok ? "text-emerald-400" : "text-rose-400"}>{a.ok ? "✓ registered" : `✗ ${a.reason}`}</span>
+                        <span className={mismatch ? "text-amber-400" : "text-zinc-400"}>code {a.code || "—"}{mismatch ? " (different tab!)" : ""}</span>
+                        <span className="text-zinc-500">v{a.version || "?"}</span>
+                        <span className="text-zinc-600 truncate max-w-[280px]">{a.workspace || ""}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
           {session.connected && (
             <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-5" data-testid="permissions-panel">
               <div className="flex items-center gap-2 mb-3">
@@ -258,7 +297,7 @@ export default function ConnectWorkspace() {
               <button onClick={seed} disabled={busy} data-testid="seed-demo-btn" className="inline-flex items-center gap-2 border border-zinc-700 text-zinc-200 rounded-full px-4 py-2 text-sm hover:border-zinc-500 transition-colors disabled:opacity-50">
                 <FolderTree className="w-4 h-4" /> Load demo messy project
               </button>
-              <button onClick={() => runMission()} disabled={busy || tree.length === 0} data-testid="run-local-mission-btn" className="inline-flex items-center gap-2 bg-emerald-500 text-zinc-950 font-semibold rounded-full px-4 py-2 text-sm hover:-translate-y-0.5 transition-transform disabled:opacity-50 disabled:translate-y-0">
+              <button onClick={() => runMission()} disabled={busy} data-testid="run-local-mission-btn" className="inline-flex items-center gap-2 bg-emerald-500 text-zinc-950 font-semibold rounded-full px-4 py-2 text-sm hover:-translate-y-0.5 transition-transform disabled:opacity-50 disabled:translate-y-0">
                 {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />} Organize & prepare this project
               </button>
             </div>
@@ -278,7 +317,7 @@ export default function ConnectWorkspace() {
               <button
                 data-testid="run-custom-mission-btn"
                 onClick={() => customGoal.trim().length >= 5 ? runMission(customGoal.trim()) : toast.error("Describe the mission")}
-                disabled={busy || tree.length === 0}
+                disabled={busy}
                 className="inline-flex items-center gap-2 bg-sky-400 text-zinc-950 font-semibold rounded-full px-4 py-2 text-sm hover:-translate-y-0.5 transition-transform disabled:opacity-50 disabled:translate-y-0"
               >
                 <Play className="w-4 h-4" /> Run
@@ -291,7 +330,7 @@ export default function ConnectWorkspace() {
               Current workspace ({tree.length} items)
             </div>
             <div className="p-4 font-mono text-[12px] grid sm:grid-cols-2 gap-y-0.5 gap-x-6" data-testid="workspace-tree">
-              {tree.length === 0 && <span className="text-zinc-600">Empty — load the demo messy project to begin.</span>}
+              {tree.length === 0 && <span className="text-zinc-600">Empty folder — that's fine. Give HIVE a task below (e.g. create hive_test.txt) or load the demo project.</span>}
               {tree.map((e, i) => (
                 <div key={i} className={e.type === "dir" ? "text-sky-300" : "text-zinc-400"}>
                   {e.type === "dir" ? "▸ " : "· "}{e.path}{e.type === "dir" ? "/" : ""}

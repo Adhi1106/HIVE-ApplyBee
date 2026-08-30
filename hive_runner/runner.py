@@ -73,7 +73,7 @@ class Workspace:
                 if ".git" in p.parts:
                     continue
                 entries.append({
-                    "path": str(p.relative_to(self.root)),
+                    "path": p.relative_to(self.root).as_posix(),
                     "type": "dir" if p.is_dir() else "file",
                     "size": p.stat().st_size if p.is_file() else 0,
                 })
@@ -251,10 +251,17 @@ async def run(server, code, workspace, stop_event):
     print("=" * 60)
     print(f"  HIVE Local Runner  v{VERSION}")
     print("=" * 60)
-    log(f"OS        : {platform.system()} ({platform.release()})")
-    log(f"Workspace : {ws_env.root}")
-    log(f"Server    : {server}")
-    log(f"Code      : {code}")
+    log(f"Running file : {os.path.abspath(__file__)}")
+    log(f"Working dir  : {os.getcwd()}")
+    log(f"Python       : {platform.python_version()}  websockets {getattr(websockets, '__version__', '?')}")
+    log(f"OS           : {platform.system()} ({platform.release()})")
+    log(f"Workspace    : {ws_env.root}")
+    log(f"Server       : {server}")
+    log(f"Code         : {code}")
+    print("-" * 60)
+    log("This window MUST stay open. It will keep running and print '[HIVE] Waiting for tasks...'")
+    log("If you instead see 'HIVE local workspace is working!' and it exits, you are running an")
+    log("OLD runner.py from the wrong folder — delete it and run the freshly downloaded v" + VERSION + ".")
     print("-" * 60)
 
     backoff = 2
