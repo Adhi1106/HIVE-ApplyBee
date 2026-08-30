@@ -176,3 +176,19 @@ review + deterministic controlled issue → identify responsible agent → recov
   bad-signature verify 400 with NO grant; reset logic unit-tested; demo-mode mission at 0 => HTTP 200; navbar red +
   exhausted banner; REAL Razorpay checkout modal opens with a live order/iframe. MANUAL leg remaining: entering a test
   card in Razorpay's iframe to complete an actual payment (architecture + server-side verify already proven).
+
+## 2026-08-30 (5) — FIX: generative deliverable bug (#7) + real LLM + credit allowances
+- REPORTED BUG: "Make a text file with 5 jokes" produced a file that only echoed "HIVE was asked to: ...".
+- TRUE ROOT CAUSE: the configured OPENAI_API_KEY was invalid (401) so live AI NEVER worked — every task hit a
+  deterministic fallback that echoed the prompt. The generic prompt also told the model "never invent content".
+- FIX: provider.py `_chat_json` now uses the Emergent Universal Key (EMERGENT_LLM_KEY) via emergentintegrations
+  LlmChat, model gpt-5.4 (env HIVE_LLM_MODEL). live_available()=bool(EMERGENT_LLM_KEY). local_orchestrator._run_generic
+  DO-step rewritten to GENERATE the real deliverable, default filename OUTPUT.txt, validate non-empty creates, and the
+  fallback no longer echoes. Added 90s LLM timeout + a guard that fails the mission if zero files are produced.
+- Updated paid credit allowances per user: Pro=500/mo, Business=2500/mo (prices unchanged ₹499 / ₹1999).
+- VERIFIED BY testing_agent (iteration_3.json): 2 independent E2E runs wrote REAL jokes + a REAL poem to disk, status
+  verified, no echo. 12/12 new billing tests pass; 7/7 requested features 100%. (13 legacy tests assert the OLD
+  per-AI-call credit model — stale, not regressions.)
+- NOT DONE THIS TURN (needs a follow-up; too large to do safely without regression risk): full multi-user AUTH
+  (signup/login/logout, per-user credits/history/workspace scoping) and the "+ New Workspace" management UI. Auth is an
+  integration requiring a method decision (custom JWT vs Emergent Google OAuth) — must ask the user before building.

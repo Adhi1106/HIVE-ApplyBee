@@ -1,0 +1,45 @@
+{
+  "summary": "Backend-only testing of (a) the PRIMARY generative-deliverable bug fix in the local-runner pipeline and (b) the credit/Razorpay subscription system. Spawned the real hive_runner against the external WSS endpoint twice and ran two generative missions end-to-end: 'Make a text file with 5 jokes' -> OUTPUT.txt with 5 real jokes, and 'Write a short poem about the ocean into poem.txt' -> poem.txt with a real poem. Both missions reached status 'verified'; NO 'HIVE was asked to' echo and NO fallback placeholder. Verified twice (2 independent runs) -> bug is FIXED. Wrote 12 new pytest cases for credits/plans/Razorpay: all 12 pass (credits=10/free on fresh user, -1 per mission, 0 + exhausted=true with DEMO_MODE still returning 200, plans 10/500/2500 & 499/1999, order amount 49900 for pro-monthly, 400 on plan=free, 400 on bogus signature with no plan/credit grant). 13 pre-existing legacy tests fail because they still assert the OLD per-AI-call credit model / old /api/credits shape - not product regressions (details below).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/missions/{id}", "issue": "mission.credits_used is now permanently 0 (Orchestrator._spend_ai no longer tracks AI spend). Dead field still returned in the API and asserted by legacy tests; remove it or repurpose it to the 1-credit-per-mission model so the UI does not show 'credits used: 0'."},
+      {"endpoint": "GET /api/missions/{id}/agents/{agent_id}", "issue": "Pre-existing gap (also reported in iteration 2): reviewer/manager events carry no `action`/worker_id, so drilldown summary.actions is empty and summary.verified=false even for verified missions."},
+      {"endpoint": "POST /api/missions/local (organize flow)", "issue": "Re-running the same organize mission on an already-organized workspace is not idempotent: 2nd run moved README.txt/brief.txt out of root (root file list changed between runs). Low severity, seed-dependent."},
+      {"endpoint": "legacy tests", "issue": "tests/test_basics.py::test_credits, tests/test_mission_lifecycle.py (2), tests/test_iteration3.py (10) still encode the pre-billing credit model (credits_used>0, per-AI-call deduction, /api/credits returning user 'id', fixed role names). They should be deleted or rewritten to the new billing model; they currently produce 13 red tests that mask real regressions."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_billing_credits.py",
+    "/app/backend/tests/local_generative_e2e.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Clean up / rewrite the 13 legacy failing tests (test_basics::test_credits, test_mission_lifecycle credit+verified assertions, test_iteration3 TestCredits & role-name assertions) to match the new 1-credit-per-mission billing model.",
+    "Remove or correctly populate mission.credits_used (currently always 0).",
+    "Populate `action`/worker_id on reviewer & manager events so the agent drilldown summary.actions/verified are meaningful.",
+    "Optional: make the local 'organize' flow idempotent on already-organized workspaces."
+  ],
+  "critical_code_review_comments": [
+    "provider._chat_json creates a new LlmChat per call with a fresh session_id - fine, but there is no timeout/retry; a hung LLM call will stall a mission task with no user-visible error. Consider asyncio.wait_for + a clear MISSION_BLOCKED event.",
+    "local_orchestrator._run_generic accepts LLM-provided paths only after _safe_rel; good. But rejected paths are silently skipped and the task can still be marked 'completed' with an empty created[] list - verify step should fail the mission if nothing was created.",
+    "Orchestrator._spend_ai now ignores its `cost` argument entirely; dead parameter + dead credits_used bookkeeping should be removed to avoid confusion.",
+    "pytest.ini runs -n 2 --dist loadscope; billing tests mutate the single shared 'default-user' document, so classes running on different workers can race (TestRazorpay asserts credits==10 while TestCredits drains). Passed on 2 consecutive runs but is inherently flaky - consider a per-test-user id or serial marker."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_billing_credits.py (new)",
+    "/app/backend/tests/local_generative_e2e.py (new)"
+  ],
+  "success_rate": {"backend": "100% on the 7 requested features (12/12 new billing tests + 2/2 generative E2E cases); 60/73 on the full legacy suite (13 stale-expectation failures)", "frontend": "not tested (backend-only request)"},
+  "seed_data_creation": "Temp runner workspaces /tmp/hive_ws_jokes and /tmp/hive_ws_poem (recreated per run). default-user billing doc reset to 10 credits / free plan after tests (POST /api/credits/renew).",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "None required (single default-user, no auth). /app/memory/test_credentials.md not needed for this app.",
+  "context_for_next_testing_agent": "Use /app/backend/tests/local_generative_e2e.py to re-verify the generative local-runner pipeline (it spawns hive_runner against the external wss URL, waits for pairing/approval, submits the mission, and asserts real file content on disk). Use /app/backend/tests/test_billing_credits.py for credits/plans/Razorpay; it resets db.users 'default-user' via billing.default_user_fields() with pymongo. Remember every mission POST costs 1 credit - call POST /api/credits/renew afterwards. The 13 failures in test_basics/test_mission_lifecycle/test_iteration3 are stale pre-billing expectations, not new regressions.",
+  "rca_of_the_issue": "Original bug: invalid OpenAI key -> 401 -> every LLM call fell back to the deterministic path, which echoed the prompt ('HIVE was asked to: ...'). Fix verified: provider._chat_json now uses emergentintegrations LlmChat with EMERGENT_LLM_KEY (model gpt-5.4), GET /api/ reports live_ai=true, and _run_generic's DO-step prompt instructs real content generation with OUTPUT.txt default + non-empty validation. Two independent E2E runs produced genuine jokes and a genuine poem on disk with mission status 'verified'."
+}

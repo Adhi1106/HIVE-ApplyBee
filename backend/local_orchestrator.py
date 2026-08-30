@@ -398,36 +398,56 @@ class LocalOrchestrator:
         await self.o.emit(mission_id, "WORKER_STARTED", f"{drole} started: {goal[:50]}.", actor=drole, task_id=t_do["id"], worker_id=doer["id"], worker_name=doer["name"], worker_role=drole, input_summary=goal)
         ops_plan = None
         mkdirs = []
-        files_blob = "\n\n".join(f"### {k}\n{v}" for k, v in contents.items()) or "(no readable files)"
+        files_blob = "\n\n".join(f"### {k}\n{v}" for k, v in contents.items()) or "(the workspace is empty / no readable files)"
         # Deterministic path first: explicit 'create file/folder ...' never depends on the LLM.
         explicit = parse_explicit_ops(goal)
-        if explicit:
+        if explicit and explicit["creates"]:
             ops_plan = {"summary": explicit["summary"], "creates": explicit["creates"], "modifies": []}
             mkdirs = explicit.get("mkdirs", [])
             await self.o.emit(mission_id, "WORKER_STARTED", f"{drole} parsed an explicit instruction (no guesswork needed).", actor=drole, task_id=t_do["id"], worker_id=doer["id"], worker_role=drole)
+        elif explicit:
+            mkdirs = explicit.get("mkdirs", [])
         if not ops_plan and await self.o._spend_ai(mission_id, 3):
             try:
-                sysp = (f"You are {dname}, a {drole}, a specialist inside a coordinated HIVE AI workforce operating in LOCAL mode. "
-                        "You do NOT access the user's computer directly; you request controlled file operations through the approved Local Runner, "
-                        "which are restricted to the approved workspace. Never invent file contents, never reference paths outside the workspace, and never "
-                        "claim an operation happened — the Runner performs and confirms it. "
-                        "Given the goal and current files, output STRICT JSON: {\"summary\": str, "
-                        "\"creates\": [{\"path\": relative_path, \"content\": str}], \"modifies\": [{\"path\": relative_path, \"content\": str}]}. "
-                        "Use ONLY relative paths inside the workspace. Keep content concise and real. Respond with JSON only.")
-                ops_plan = await _prov._chat_json(sysp, f"Goal: {goal}\n\nCurrent files:\n{files_blob}")
+                sysp = (
+                    f"You are {dname}, a {drole} inside the HIVE AI workforce, working on a REAL local workspace "
+                    "through a sandboxed runner (all paths are relative, inside the approved folder only).\n"
+                    "Your job is to ACTUALLY PRODUCE the deliverable the user asked for. If they ask for jokes, write "
+                    "real jokes; if they ask for code, write real working code; if they ask for a list/story/plan, write "
+                    "the real content. GENERATE the full content yourself — do not describe the task, do not echo the "
+                    "request, and never write a placeholder like 'HIVE was asked to...'.\n"
+                    "Pick a sensible filename if the user didn't give one (default 'OUTPUT.txt' for plain text, or a "
+                    "fitting extension like .py/.md/.csv). If the user named a file, use exactly that name.\n"
+                    "Respond with STRICT JSON only: {\"summary\": str, \"creates\": [{\"path\": relative_path, "
+                    "\"content\": full_file_content_string}], \"modifies\": [{\"path\": relative_path, \"content\": str}]}. "
+                    "Put the COMPLETE generated content in the 'content' field. Use only relative paths inside the workspace."
+                )
+                plan = await asyncio.wait_for(
+                    _prov._chat_json(sysp, f"User request: {goal}\n\nExisting files (context, may be empty):\n{files_blob}"),
+                    timeout=90,
+                )
+                # accept only if the model actually produced at least one file with content
+                creates = [c for c in (plan.get("creates") or []) if (c.get("content") or "").strip()]
+                if creates:
+                    for c in creates:
+                        if not (c.get("path") or "").strip():
+                            c["path"] = "OUTPUT.txt"
+                    ops_plan = {"summary": plan.get("summary") or f"Produced {len(creates)} file(s).",
+                                "creates": creates, "modifies": [c for c in (plan.get("modifies") or []) if (c.get("content") or "").strip()]}
             except Exception as ex:  # noqa: BLE001
-                logger.warning(f"generic AI plan failed: {ex}")
+                logger.warning(f"generic AI generation failed: {ex}")
                 ops_plan = None
         if not ops_plan:
-            # deterministic fallback
+            # Safe fallback: summarise a README if present; otherwise create the requested file
+            # with a clear note (never echo the raw prompt as the deliverable).
             readme = next((c for k, c in contents.items() if k.lower().startswith("readme")), None)
             if readme:
                 lines = [l for l in readme.splitlines() if l.strip()][:8]
-                ops_plan = {"summary": "Created summary.txt from README (deterministic fallback).",
+                ops_plan = {"summary": "Created summary.txt from README.",
                             "creates": [{"path": "summary.txt", "content": "Summary of README:\n" + "\n".join("- " + l.strip("# ").strip() for l in lines) + "\n"}], "modifies": []}
             else:
-                ops_plan = {"summary": "Created OUTPUT.txt describing the goal (deterministic fallback).",
-                            "creates": [{"path": "OUTPUT.txt", "content": f"HIVE was asked to: {goal}\n"}], "modifies": []}
+                ops_plan = {"summary": "AI content generation was unavailable; created a placeholder OUTPUT.txt.",
+                            "creates": [{"path": "OUTPUT.txt", "content": f"HIVE could not reach the content generator for this request:\n\n  {goal}\n\nPlease retry — when the AI provider is available HIVE will write the real deliverable here.\n"}], "modifies": []}
 
         created = []
         for d in mkdirs:
@@ -443,6 +463,9 @@ class LocalOrchestrator:
             await self._tool(mission_id, drole, t_do["id"], "write", {"path": path, "content": item.get("content", "")}, f"create/modify {path}")
             created.append(path)
             await asyncio.sleep(0.1)
+        if not created:
+            await self.o.emit(mission_id, "VERIFICATION_FAILED", "No deliverable was produced for this request.", level="error", actor=drole, task_id=t_do["id"])
+            raise RuntimeError("No files were produced for this mission.")
         await self.o.set_task(t_do, status="completed", output={"created": created, "summary": ops_plan.get("summary")}, summary=ops_plan.get("summary", f"Produced {len(created)} file(s)."), completed_at=now_iso())
         await self.o.set_agent(doer, status="done", current_task_id=None)
         await self.o.emit(mission_id, "WORKER_COMPLETED", ops_plan.get("summary", f"{drole} produced {len(created)} file(s)."), level="success", actor=drole, task_id=t_do["id"], worker_id=doer["id"], output_summary=ops_plan.get("summary"), files_affected=created, handoff_to="QA Reviewer")

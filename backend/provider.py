@@ -7,7 +7,9 @@ Swapping providers later only requires changing env vars / this file.
 """
 from __future__ import annotations
 import os
+import re
 import json
+import uuid
 import logging
 from pathlib import Path
 from typing import Dict, Any, List, Optional
@@ -17,6 +19,7 @@ from dotenv import load_dotenv
 
 import mock_provider
 import prompts
+from emergentintegrations.llm.chat import LlmChat, UserMessage
 
 load_dotenv(Path(__file__).parent / '.env')
 logger = logging.getLogger("hive.provider")
@@ -24,6 +27,8 @@ logger = logging.getLogger("hive.provider")
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 OPENAI_BASE_URL = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
 OPENAI_MODEL = os.environ.get("OPENAI_MODEL", "gpt-5-nano")
+EMERGENT_LLM_KEY = os.environ.get("EMERGENT_LLM_KEY", "")
+HIVE_LLM_MODEL = os.environ.get("HIVE_LLM_MODEL", "gpt-5.4")
 
 
 class HiveProvider:
@@ -33,34 +38,30 @@ class HiveProvider:
         self.last_source = "mock"
 
     def live_available(self) -> bool:
-        return bool(OPENAI_API_KEY)
+        return bool(EMERGENT_LLM_KEY)
 
     async def _chat_json(self, system: str, user: str) -> Dict[str, Any]:
-        """Call the OpenAI-compatible endpoint and return parsed JSON. Raises on failure."""
-        if not OPENAI_API_KEY:
-            raise RuntimeError("no api key configured")
-        payload = {
-            "model": OPENAI_MODEL,
-            "messages": [
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-            "response_format": {"type": "json_object"},
-        }
-        if OPENAI_MODEL.startswith("gpt-5") or OPENAI_MODEL.startswith("o"):
-            payload["reasoning_effort"] = "low"
-            payload["max_completion_tokens"] = 4000
-        else:
-            payload["temperature"] = 0.7
-            payload["max_tokens"] = 2000
-
-        headers = {"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"}
-        async with httpx.AsyncClient(timeout=120) as client:
-            resp = await client.post(f"{OPENAI_BASE_URL}/chat/completions", json=payload, headers=headers)
-            resp.raise_for_status()
-            data = resp.json()
-        content = data["choices"][0]["message"]["content"]
-        return json.loads(content)
+        """Call the Emergent Universal Key (gpt-5.4 by default) and return parsed JSON. Raises on failure."""
+        if not EMERGENT_LLM_KEY:
+            raise RuntimeError("no llm key configured")
+        chat = LlmChat(
+            api_key=EMERGENT_LLM_KEY,
+            session_id=uuid.uuid4().hex,
+            system_message=system + "\n\nRespond with ONLY a single valid JSON object, no prose, no code fences.",
+        ).with_model("openai", HIVE_LLM_MODEL)
+        resp = await chat.send_message(UserMessage(text=user))
+        text = resp if isinstance(resp, str) else getattr(resp, "content", str(resp))
+        text = text.strip()
+        if text.startswith("```"):
+            text = re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip(), flags=re.I).strip()
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            # be forgiving: extract the first {...} block
+            m = re.search(r"\{.*\}", text, re.S)
+            if not m:
+                raise
+            return json.loads(m.group(0))
 
     # ---------- planMission ----------
     async def plan_mission(self, goal: str) -> Dict[str, Any]:

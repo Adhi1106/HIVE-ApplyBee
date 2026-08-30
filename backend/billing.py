@@ -22,15 +22,15 @@ PLANS = {
     },
     "pro": {
         "id": "pro", "name": "Pro", "price_monthly": 499, "price_yearly": 4990,
-        "credits": 100, "recommended": True,
+        "credits": 500, "recommended": True,
         "tagline": "For serious builders",
-        "features": ["100 credits / month", "Everything in Free", "Priority mission execution", "Email support"],
+        "features": ["500 credits / month", "Everything in Free", "Priority mission execution", "Email support"],
     },
     "business": {
         "id": "business", "name": "Business", "price_monthly": 1999, "price_yearly": 19990,
-        "credits": 500, "recommended": False,
+        "credits": 2500, "recommended": False,
         "tagline": "For teams shipping fast",
-        "features": ["500 credits / month", "Everything in Pro", "Team-oriented usage", "Priority support"],
+        "features": ["2500 credits / month", "Everything in Pro", "Team-oriented usage", "Priority support"],
     },
 }
 
