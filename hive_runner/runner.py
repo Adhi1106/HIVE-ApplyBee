@@ -165,32 +165,54 @@ async def _heartbeat(conn):
 
 async def run(server, code, workspace):
     ws_env = Workspace(workspace)
-    print("HIVE Runner starting...")
-    print(f"OS: {platform.system()} ({platform.release()})")
-    print(f"Workspace: {ws_env.root}")
-    print(f"Connecting to HIVE... ({server})")
+    print("=" * 56)
+    print("  HIVE Local Runner  v1.1.0")
+    print("=" * 56)
+    print(f"OS        : {platform.system()} ({platform.release()})")
+    print(f"Workspace : {ws_env.root}")
+    print(f"Server    : {server}")
+    print(f"Code      : {code}")
+    print("-" * 56)
+    print("Connecting to HIVE...")
     async for conn in websockets.connect(server, ping_interval=20, ping_timeout=20, max_size=8_000_000):
         hb = None
         try:
-            print("Pairing...")
+            print("Socket open. Sending pairing handshake...")
             await conn.send(json.dumps({
                 "type": "register",
                 "code": code,
                 "workspace": str(ws_env.root),
                 "machine": platform.node() or "local",
                 "os": platform.system(),
-                "version": "1.0.0",
+                "version": "1.1.0",
                 "capabilities": CAPABILITIES,
                 "permissions": PERMISSIONS,
             }))
-            hb = asyncio.ensure_future(_heartbeat(conn))
-            print("Connected \u2713")
-            print("Workspace ready \u2713")
-            print("Waiting for tasks...")
+            # Wait for the server to actually confirm the pairing BEFORE we
+            # claim to be connected. This is the real handshake.
+            registered = False
             async for raw in conn:
                 msg = json.loads(raw)
                 t = msg.get("type")
-                if t == "tool_call":
+                if t == "registered":
+                    registered = True
+                    hb = asyncio.ensure_future(_heartbeat(conn))
+                    print("\u2713 Paired with HIVE.")
+                    print("\u2713 Runner connected. Go back to your browser — it should now say 'Runner connected'.")
+                    if msg.get("approved"):
+                        print("\u2713 Workspace already approved. Waiting for tasks...")
+                    else:
+                        print("Waiting for you to approve this workspace in the browser...")
+                elif t == "error":
+                    print("\u2717 PAIRING FAILED: " + str(msg.get("error")))
+                    if msg.get("fatal"):
+                        print("  -> Fix: generate a fresh pairing code in the browser and re-run this command.")
+                        return
+                elif t == "approved":
+                    print("\u2713 Workspace approved by user. Waiting for tasks...")
+                elif t == "tool_call":
+                    if not registered:
+                        continue
                     call_id = msg["id"]
                     tool = msg.get("tool")
                     args = msg.get("args") or {}
@@ -199,22 +221,18 @@ async def run(server, code, workspace):
                     try:
                         result = ws_env.dispatch(tool, args)
                         await conn.send(json.dumps({"type": "tool_result", "id": call_id, "ok": True, "result": result}))
-                        print(f"  Operation completed \u2713  ({tool} {tgt})".rstrip())
+                        print(f"  \u2713 completed  ({tool} {tgt})".rstrip())
                     except Exception as e:  # noqa: BLE001
                         await conn.send(json.dumps({"type": "tool_result", "id": call_id, "ok": False, "error": str(e)}))
                         print(f"  \u2717 {tool}: {e}")
                     print("Waiting for tasks...")
-                elif t == "approved":
-                    print("Workspace approved by user \u2713")
                 elif t == "heartbeat_ack":
                     pass
-                elif t == "error":
-                    print(f"Server error: {msg.get('error')}")
         except websockets.ConnectionClosed:
-            print("Connection lost. Attempting to reconnect...")
+            print("Connection lost. Reconnecting...")
             await asyncio.sleep(2)
         except Exception as e:  # noqa: BLE001
-            print(f"Error: {e}. Attempting to reconnect...")
+            print(f"Error: {e}. Reconnecting...")
             await asyncio.sleep(2)
         finally:
             if hb:

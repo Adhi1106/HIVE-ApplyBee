@@ -107,3 +107,19 @@ review + deterministic controlled issue → identify responsible agent → recov
 - Internal agent instructions hardened for LOCAL mode.
 - DEFERRED backlog: Replay mode, public mission sharing, real multi-user auth, subscription/pricing redesign,
   Workforce-page global-capabilities split, filesystem watcher streaming.
+
+
+## 2026-08-30 — Local Runner pairing hardening (debug fork)
+- ROOT CAUSE of "stuck on Waiting…": (a) pairing sessions lived only in backend RAM, so any `--reload`/restart
+  between pairing and connecting wiped the code -> runner's register silently rejected; frontend swallowed the
+  404 forever. (b) User was running a STALE runner.py whose handshake predated the current protocol.
+- FIX backend (`runner_hub.py`): pairing sessions now PERSISTED in Mongo `runner_sessions` (only the live socket
+  stays in RAM). Codes survive backend restarts; runner just re-registers on reconnect. `connected` is derived
+  strictly from a live socket (no false positives). Unknown code -> explicit `{type:error, fatal, code:invalid_code}`.
+  hub.get/create_session/approve are now async (updated server.py + local_orchestrator.py call sites).
+- FIX runner (`runner.py` v1.1.0): waits for server `registered` reply BEFORE declaring connected; prints explicit
+  failure reasons (invalid/expired code, connect error). Served fresh via GET /api/runner/download.
+- FIX frontend (`ConnectWorkspace.jsx`): no longer swallows poll errors — distinguishes Waiting (with elapsed s) /
+  Runner connected / session-expired(404) with a "Generate a new pairing code" re-pair action.
+- VERIFIED externally against live preview: WS upgrade OK, handshake OK, poll connected=true 60s, approve pushes to
+  runner, backend RPC tool_call reaches runner, AND code stays valid across a backend restart.

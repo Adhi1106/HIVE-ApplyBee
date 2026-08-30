@@ -65,6 +65,7 @@ async def get_or_create_local_project(session):
 
 @app.on_event("startup")
 async def startup():
+    hub.attach_db(db)
     await ensure_user()
     await ensure_default_project()
 
@@ -228,13 +229,13 @@ async def runner_ws(ws: WebSocket):
 
 @api_router.post("/runner/pair")
 async def runner_pair():
-    s = hub.create_session()
+    s = await hub.create_session()
     return s.public()
 
 
 @api_router.get("/runner/session/{sid}")
 async def runner_session(sid: str):
-    s = hub.get(sid)
+    s = await hub.get(sid)
     if not s:
         raise HTTPException(status_code=404, detail="Session not found")
     return s.public()
@@ -242,9 +243,10 @@ async def runner_session(sid: str):
 
 @api_router.post("/runner/session/{sid}/approve")
 async def runner_approve(sid: str):
-    if not hub.approve(sid):
+    if not await hub.approve(sid):
         raise HTTPException(status_code=400, detail="Runner not connected for this session.")
-    return hub.get(sid).public()
+    s = await hub.get(sid)
+    return s.public()
 
 
 @api_router.get("/runner/session/{sid}/tree")
@@ -257,7 +259,7 @@ async def runner_tree(sid: str):
 
 @api_router.post("/runner/session/{sid}/seed-demo")
 async def runner_seed_demo(sid: str):
-    s = hub.get(sid)
+    s = await hub.get(sid)
     if not s or s.status != "approved":
         raise HTTPException(status_code=400, detail="Approve a connected workspace first.")
     for name, content in DEMO_FILES.items():
@@ -275,7 +277,7 @@ async def runner_download():
 
 @api_router.post("/missions/local")
 async def create_local_mission(body: LocalMissionCreate):
-    s = hub.get(body.session_id)
+    s = await hub.get(body.session_id)
     if not s or s.status != "approved":
         raise HTTPException(status_code=400, detail="Connect and approve a workspace runner first.")
     await ensure_user()

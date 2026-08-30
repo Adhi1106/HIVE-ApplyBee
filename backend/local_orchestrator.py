@@ -79,7 +79,7 @@ class LocalOrchestrator:
     async def _run(self, mission_id: str, goal: str, session_id: str):
         self._sid = session_id
         self._ops = []
-        session = hub.get(session_id)
+        session = await hub.get(session_id)
         if not session or session.status != "approved":
             raise RuntimeError("No approved workspace runner is connected.")
         if "organize" in goal.lower():

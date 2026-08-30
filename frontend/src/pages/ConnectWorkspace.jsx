@@ -17,20 +17,34 @@ export default function ConnectWorkspace() {
   const [customGoal, setCustomGoal] = useState("");
   const [osSel, setOsSel] = useState("windows");
   const [term, setTerm] = useState("powershell");
+  const [error, setError] = useState(null);
+  const [waited, setWaited] = useState(0);
   const timer = useRef(null);
   const navigate = useNavigate();
 
   const startPolling = (id) => {
     setSid(id);
+    setError(null);
+    setWaited(0);
+    const started = Date.now();
     const poll = async () => {
       try {
         const s = await runnerSession(id);
         setSession(s);
+        setError(null);
+        setWaited(Math.floor((Date.now() - started) / 1000));
         if (s.approved) {
           try { setTree((await runnerTree(id)).entries || []); } catch (e) {}
         }
-      } catch (e) {}
-      timer.current = setTimeout(poll, 1500);
+        timer.current = setTimeout(poll, 1500);
+      } catch (e) {
+        if (e?.response?.status === 404) {
+          setError("This pairing session expired (the server restarted). Generate a new code below and re-run the runner.");
+          return; // stop polling — session is gone
+        }
+        setError("Lost contact with HIVE. Retrying…");
+        timer.current = setTimeout(poll, 2000);
+      }
     };
     clearTimeout(timer.current);
     poll();
@@ -170,12 +184,41 @@ export default function ConnectWorkspace() {
             </div>
           )}
 
-          <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-5 flex items-center gap-3" data-testid="runner-status">
-            {session.connected ? <CheckCircle2 className="w-5 h-5 text-emerald-400" /> : <Loader2 className="w-5 h-5 text-sky-400 animate-spin" />}
-            <div className="flex-1">
-              <div className="text-sm text-white">{session.connected ? "Runner connected" : "Waiting for runner to connect…"}</div>
-              {session.workspace && <div className="text-xs text-zinc-500 font-mono">{session.workspace}</div>}
+          <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-5" data-testid="runner-status">
+            <div className="flex items-center gap-3">
+              {error ? (
+                <span className="w-5 h-5 rounded-full bg-rose-500/20 border border-rose-500/50 flex items-center justify-center text-rose-400 text-xs">!</span>
+              ) : session.connected ? (
+                <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+              ) : (
+                <Loader2 className="w-5 h-5 text-sky-400 animate-spin" />
+              )}
+              <div className="flex-1">
+                <div className="text-sm text-white" data-testid="runner-status-text">
+                  {error
+                    ? "Runner not connected"
+                    : session.connected
+                    ? "Runner connected"
+                    : `Waiting for runner to connect…${waited > 3 ? ` (${waited}s)` : ""}`}
+                </div>
+                {session.workspace && !error && (
+                  <div className="text-xs text-zinc-500 font-mono">{session.workspace}</div>
+                )}
+                {!error && !session.connected && (
+                  <div className="text-xs text-zinc-600 mt-0.5">
+                    Run the command above in a terminal. This will flip to “Runner connected” the moment your machine pairs.
+                  </div>
+                )}
+              </div>
             </div>
+            {error && (
+              <div className="mt-3 rounded-lg border border-rose-500/30 bg-rose-500/5 p-3" data-testid="runner-error">
+                <div className="text-xs text-rose-300 leading-relaxed">{error}</div>
+                <button onClick={pairOwn} data-testid="repair-btn" className="mt-2 text-xs text-sky-400 hover:text-sky-300 font-medium">
+                  → Generate a new pairing code
+                </button>
+              </div>
+            )}
           </div>
 
           {session.connected && (
