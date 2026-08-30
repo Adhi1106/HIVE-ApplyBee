@@ -28,7 +28,7 @@ def _now() -> str:
 
 DEMO_CODE = "HIVE-DEMO"
 DEMO_SESSION = "demo"
-MIN_RUNNER = (1, 2, 0)  # runners older than this must re-download
+MIN_RUNNER = (1, 3, 0)  # runners older than this must re-download
 
 
 def _ver_tuple(v: str):
@@ -150,6 +150,19 @@ class RunnerHub:
                                       "os": s.os, "version": s.version, "machine": s.machine,
                                       "connected_at": s.connected_at, "last_heartbeat": s.last_heartbeat})
         return {"connected_runners": connected, "recent_attempts": self.recent}
+
+    def active(self) -> Dict[str, Any]:
+        """The workspace-facing session for the first page: the currently live
+        runner (prefers an approved one). Exposes only what the UI needs."""
+        live = []
+        for sid, s in self.sessions.items():
+            if s.runner_id and s.runner_id in self.conns:
+                live.append(s)
+        if not live:
+            return {"connected": False, "approved": False, "session_id": None, "workspace": None}
+        s = next((x for x in live if x.approved), live[0])
+        return {"connected": True, "approved": bool(s.approved), "session_id": s.id,
+                "workspace": s.workspace, "os": s.os, "version": s.version}
 
     def attach_db(self, db):
         self.db = db

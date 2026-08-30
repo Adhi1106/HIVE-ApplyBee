@@ -32,7 +32,7 @@ from pathlib import Path
 
 import websockets
 
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 
 CAPABILITIES = [
     "list", "read", "write", "mkdir", "move", "copy", "rename", "git_status", "git_diff",
@@ -301,7 +301,7 @@ def main():
     ap = argparse.ArgumentParser(description="HIVE Local Runner")
     ap.add_argument("--server", default=os.environ.get("HIVE_RUNNER_SERVER", "ws://localhost:8001/api/runner/ws"))
     ap.add_argument("--code", default=os.environ.get("HIVE_RUNNER_CODE", "HIVE-DEMO"))
-    ap.add_argument("--workspace", default=os.environ.get("HIVE_RUNNER_WORKSPACE", str(Path.home() / "hive_workspace")))
+    ap.add_argument("--workspace", default=os.environ.get("HIVE_RUNNER_WORKSPACE", os.getcwd()))
     ap.add_argument("--version", action="version", version=f"HIVE Local Runner v{VERSION}")
     a = ap.parse_args()
 

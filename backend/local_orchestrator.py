@@ -408,46 +408,57 @@ class LocalOrchestrator:
         elif explicit:
             mkdirs = explicit.get("mkdirs", [])
         if not ops_plan and await self.o._spend_ai(mission_id, 3):
-            try:
-                sysp = (
-                    f"You are {dname}, a {drole} inside the HIVE AI workforce, working on a REAL local workspace "
-                    "through a sandboxed runner (all paths are relative, inside the approved folder only).\n"
-                    "Your job is to ACTUALLY PRODUCE the deliverable the user asked for. If they ask for jokes, write "
-                    "real jokes; if they ask for code, write real working code; if they ask for a list/story/plan, write "
-                    "the real content. GENERATE the full content yourself — do not describe the task, do not echo the "
-                    "request, and never write a placeholder like 'HIVE was asked to...'.\n"
-                    "Pick a sensible filename if the user didn't give one (default 'OUTPUT.txt' for plain text, or a "
-                    "fitting extension like .py/.md/.csv). If the user named a file, use exactly that name.\n"
-                    "Respond with STRICT JSON only: {\"summary\": str, \"creates\": [{\"path\": relative_path, "
-                    "\"content\": full_file_content_string}], \"modifies\": [{\"path\": relative_path, \"content\": str}]}. "
-                    "Put the COMPLETE generated content in the 'content' field. Use only relative paths inside the workspace."
-                )
-                plan = await asyncio.wait_for(
-                    _prov._chat_json(sysp, f"User request: {goal}\n\nExisting files (context, may be empty):\n{files_blob}"),
-                    timeout=90,
-                )
-                # accept only if the model actually produced at least one file with content
-                creates = [c for c in (plan.get("creates") or []) if (c.get("content") or "").strip()]
-                if creates:
-                    for c in creates:
-                        if not (c.get("path") or "").strip():
-                            c["path"] = "OUTPUT.txt"
-                    ops_plan = {"summary": plan.get("summary") or f"Produced {len(creates)} file(s).",
-                                "creates": creates, "modifies": [c for c in (plan.get("modifies") or []) if (c.get("content") or "").strip()]}
-            except Exception as ex:  # noqa: BLE001
-                logger.warning(f"generic AI generation failed: {ex}")
-                ops_plan = None
-        if not ops_plan:
-            # Safe fallback: summarise a README if present; otherwise create the requested file
-            # with a clear note (never echo the raw prompt as the deliverable).
-            readme = next((c for k, c in contents.items() if k.lower().startswith("readme")), None)
-            if readme:
-                lines = [l for l in readme.splitlines() if l.strip()][:8]
-                ops_plan = {"summary": "Created summary.txt from README.",
-                            "creates": [{"path": "summary.txt", "content": "Summary of README:\n" + "\n".join("- " + l.strip("# ").strip() for l in lines) + "\n"}], "modifies": []}
-            else:
-                ops_plan = {"summary": "AI content generation was unavailable; created a placeholder OUTPUT.txt.",
-                            "creates": [{"path": "OUTPUT.txt", "content": f"HIVE could not reach the content generator for this request:\n\n  {goal}\n\nPlease retry — when the AI provider is available HIVE will write the real deliverable here.\n"}], "modifies": []}
+            sysp = (
+                f"You are {dname}, a {drole} inside the HIVE AI workforce, working on a REAL local workspace "
+                "through a sandboxed runner (all paths are relative, inside the approved folder only).\n"
+                "Your job is to ACTUALLY PRODUCE the deliverable the user asked for. If they ask for jokes, write "
+                "real jokes; if they ask for code, write real working code; if they ask for a list/story/plan, write "
+                "the real content. GENERATE the full content yourself — do not describe the task, do not echo the "
+                "request, and never write a placeholder like 'HIVE was asked to...'.\n"
+                "Pick a sensible filename if the user didn't give one (default 'OUTPUT.txt' for plain text, or a "
+                "fitting extension like .py/.md/.csv). If the user named a file, use exactly that name.\n"
+                "Respond with STRICT JSON only: {\"summary\": str, \"creates\": [{\"path\": relative_path, "
+                "\"content\": full_file_content_string}], \"modifies\": [{\"path\": relative_path, \"content\": str}]}. "
+                "Put the COMPLETE generated content in the 'content' field. Use only relative paths inside the workspace."
+            )
+            last_err = None
+            for attempt in range(2):  # one retry for transient LLM hiccups
+                try:
+                    plan = await asyncio.wait_for(
+                        _prov._chat_json(sysp, f"User request: {goal}\n\nExisting files (context, may be empty):\n{files_blob}"),
+                        timeout=90,
+                    )
+                    creates = [c for c in (plan.get("creates") or []) if (c.get("content") or "").strip()]
+                    if creates:
+                        for c in creates:
+                            if not (c.get("path") or "").strip():
+                                c["path"] = "OUTPUT.txt"
+                        ops_plan = {"summary": plan.get("summary") or f"Produced {len(creates)} file(s).",
+                                    "creates": creates, "modifies": [c for c in (plan.get("modifies") or []) if (c.get("content") or "").strip()]}
+                        break
+                    last_err = "the generator returned no content"
+                except Exception as ex:  # noqa: BLE001
+                    last_err = str(ex)
+                    logger.warning(f"generic AI generation attempt {attempt+1} failed: {ex}")
+            if not ops_plan:
+                # README-only workspaces can still be summarised deterministically (organise-type tasks).
+                readme = next((c for k, c in contents.items() if k.lower().startswith("readme")), None)
+                if readme:
+                    lines = [l for l in readme.splitlines() if l.strip()][:8]
+                    ops_plan = {"summary": "Created summary.txt from README.",
+                                "creates": [{"path": "summary.txt", "content": "Summary of README:\n" + "\n".join("- " + l.strip("# ").strip() for l in lines) + "\n"}], "modifies": []}
+                else:
+                    # Do NOT write a fake/placeholder file — fail cleanly so the user can retry.
+                    await self.o.emit(mission_id, "VERIFICATION_FAILED",
+                                      "Task execution failed: the AI content generator is unavailable. No file was created — please retry.",
+                                      level="error", actor=drole, task_id=t_do["id"])
+                    raise RuntimeError(f"AI content generator unavailable ({last_err}). No deliverable written.")
+        elif not ops_plan:
+            # No explicit plan and AI not available at all.
+            await self.o.emit(mission_id, "VERIFICATION_FAILED",
+                              "Task execution failed: the AI content generator is not configured. No file was created.",
+                              level="error", actor=drole, task_id=t_do["id"])
+            raise RuntimeError("AI content generator not configured. No deliverable written.")
 
         created = []
         for d in mkdirs:

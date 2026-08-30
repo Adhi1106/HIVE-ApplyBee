@@ -42,6 +42,8 @@ export const runnerSeedDemo = (sid) =>
   axios.post(`${API}/runner/session/${sid}/seed-demo`).then((r) => r.data);
 export const runnerDebug = () =>
   axios.get(`${API}/runner/debug`).then((r) => r.data);
+export const runnerActive = () =>
+  axios.get(`${API}/runner/active`).then((r) => r.data);
 export const createLocalMission = (session_id, goal) =>
   axios.post(`${API}/missions/local`, { session_id, goal: goal || "Organize and prepare this project." }).then((r) => r.data);
 

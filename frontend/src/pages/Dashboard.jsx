@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
-import { ArrowRight, Loader2, Sparkles, Users, GitBranch, HardDrive } from "lucide-react";
-import { createMission, getExamples, getCredits } from "@/lib/api";
+import { ArrowRight, Loader2, Sparkles, Users, GitBranch, HardDrive, FlaskConical, FolderCheck, RefreshCw } from "lucide-react";
+import { createMission, createLocalMission, getExamples, getCredits, runnerActive } from "@/lib/api";
 import { toast } from "sonner";
 import CreditExhaustedModal from "@/components/mission/CreditExhaustedModal";
 
@@ -12,7 +12,11 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(false);
   const [credits, setCredits] = useState(null);
   const [showCreditModal, setShowCreditModal] = useState(false);
+  const [mode, setMode] = useState("demo"); // "demo" | "local"
+  const [active, setActive] = useState(null); // runner status
   const navigate = useNavigate();
+
+  const refreshActive = () => runnerActive().then(setActive).catch(() => {});
 
   useEffect(() => {
     getExamples().then((d) => {
@@ -20,6 +24,9 @@ export default function Dashboard() {
       setDemo(d.demo || "");
     }).catch(() => {});
     getCredits().then((u) => setCredits(u?.credits)).catch(() => {});
+    refreshActive();
+    const id = setInterval(refreshActive, 5000);
+    return () => clearInterval(id);
   }, []);
 
   const launch = async (text) => {
@@ -30,7 +37,18 @@ export default function Dashboard() {
     }
     setLoading(true);
     try {
-      const res = await createMission(g);
+      let res;
+      if (mode === "local") {
+        if (!active?.approved || !active?.session_id) {
+          toast.error("Connect and approve a local workspace first.");
+          setLoading(false);
+          navigate("/connect");
+          return;
+        }
+        res = await createLocalMission({ session_id: active.session_id, goal: g });
+      } else {
+        res = await createMission(g);
+      }
       window.dispatchEvent(new Event("hive-credits-refresh"));
       navigate(`/mission/${res.id}`);
     } catch (e) {
@@ -101,28 +119,78 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {demo && (
-          <button
-            data-testid="demo-mission-btn"
-            onClick={() => launch(demo)}
-            className="mt-4 text-sm text-sky-400 hover:text-sky-300 transition-colors font-mono"
-          >
-            ▸ Run the reliable demo mission (SaaS churn recovery)
-          </button>
-        )}
-
-        <Link
-          to="/connect"
-          data-testid="connect-workspace-cta"
-          className="mt-6 group flex items-center gap-3 rounded-xl border border-emerald-500/30 bg-emerald-500/5 hover:bg-emerald-500/10 p-4 transition-colors"
-        >
-          <HardDrive className="w-5 h-5 text-emerald-400 shrink-0" />
-          <div className="flex-1 min-w-0">
-            <div className="text-sm text-white font-medium">Run HIVE on your own files (Local Runner)</div>
-            <div className="text-xs text-zinc-400">Connect a workspace folder and let the workforce do real file operations — try "Organize and prepare this project".</div>
+        {/* Execution mode selector */}
+        <div className="mt-6" data-testid="execution-mode">
+          <div className="text-xs font-mono uppercase tracking-widest text-zinc-500 mb-2">Execution mode</div>
+          <div className="grid sm:grid-cols-2 gap-3">
+            <button
+              data-testid="mode-demo"
+              onClick={() => setMode("demo")}
+              className={`text-left rounded-xl border p-4 transition-colors ${
+                mode === "demo" ? "border-sky-500/50 bg-sky-500/10" : "border-zinc-800 bg-zinc-900/40 hover:border-zinc-700"
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <FlaskConical className={`w-4 h-4 ${mode === "demo" ? "text-sky-400" : "text-zinc-400"}`} />
+                <span className="text-sm font-semibold text-white">Demo run</span>
+                {mode === "demo" && <span className="ml-auto text-[10px] font-mono text-sky-400">SELECTED</span>}
+              </div>
+              <div className="text-xs text-zinc-400 mt-1">Try HIVE with a simulated workspace. Nothing on your computer is touched.</div>
+            </button>
+            <button
+              data-testid="mode-local"
+              onClick={() => { setMode("local"); refreshActive(); }}
+              className={`text-left rounded-xl border p-4 transition-colors ${
+                mode === "local" ? "border-emerald-500/50 bg-emerald-500/10" : "border-zinc-800 bg-zinc-900/40 hover:border-zinc-700"
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <HardDrive className={`w-4 h-4 ${mode === "local" ? "text-emerald-400" : "text-zinc-400"}`} />
+                <span className="text-sm font-semibold text-white">Local workspace</span>
+                {mode === "local" && <span className="ml-auto text-[10px] font-mono text-emerald-400">SELECTED</span>}
+              </div>
+              <div className="text-xs text-zinc-400 mt-1">Give HIVE access to your selected local folder and let it create, read, and modify real files.</div>
+            </button>
           </div>
-          <ArrowRight className="w-4 h-4 text-emerald-400 group-hover:translate-x-0.5 transition-transform shrink-0" />
-        </Link>
+
+          {mode === "local" && (
+            <div className="mt-3 rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-4" data-testid="local-workspace-status">
+              {active?.connected ? (
+                <div className="flex items-center gap-3">
+                  <FolderCheck className="w-5 h-5 text-emerald-400 shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm text-white flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400" /> {active.approved ? "Connected" : "Connected — approval needed"}
+                    </div>
+                    <div className="text-xs text-zinc-400 font-mono truncate" data-testid="active-workspace-path">{active.workspace}</div>
+                  </div>
+                  <button onClick={refreshActive} title="Refresh" className="text-zinc-500 hover:text-white p-1"><RefreshCw className="w-4 h-4" /></button>
+                  <Link to="/connect" data-testid="change-workspace-btn" className="text-xs text-emerald-400 hover:text-emerald-300 border border-emerald-500/40 rounded-full px-3 py-1.5 whitespace-nowrap">
+                    {active.approved ? "Change workspace" : "Approve"}
+                  </Link>
+                </div>
+              ) : (
+                <div className="flex items-center gap-3">
+                  <span className="w-2 h-2 rounded-full bg-zinc-600 shrink-0" />
+                  <div className="flex-1 text-sm text-zinc-300">Not connected</div>
+                  <Link to="/connect" data-testid="connect-workspace-btn" className="text-xs text-emerald-400 hover:text-emerald-300 border border-emerald-500/40 rounded-full px-3 py-1.5">
+                    Connect workspace
+                  </Link>
+                </div>
+              )}
+            </div>
+          )}
+
+          {mode === "demo" && demo && (
+            <button
+              data-testid="demo-mission-btn"
+              onClick={() => launch(demo)}
+              className="mt-3 text-sm text-sky-400 hover:text-sky-300 transition-colors font-mono"
+            >
+              ▸ Run the reliable demo mission (SaaS churn recovery)
+            </button>
+          )}
+        </div>
 
         <div className="mt-14">
           <div className="flex items-center gap-2 text-zinc-500 text-xs font-mono uppercase tracking-widest mb-4">

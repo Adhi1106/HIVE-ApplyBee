@@ -341,6 +341,12 @@ async def runner_debug():
     return hub.debug()
 
 
+@api_router.get("/runner/active")
+async def runner_active():
+    """Minimal workspace status for the first page (no technical details)."""
+    return hub.active()
+
+
 @api_router.post("/missions/local")
 async def create_local_mission(body: LocalMissionCreate):
     s = await hub.get(body.session_id)

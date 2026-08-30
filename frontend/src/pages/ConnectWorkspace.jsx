@@ -107,15 +107,14 @@ export default function ConnectWorkspace() {
   const code = session?.code || "YOUR-CODE";
   const server = runnerWsUrl();
   const buildCmd = () => {
-    const ws = osSel === "windows" ? "C:\\Users\\you\\HIVE-Test" : "/path/to/your/project";
     if (osSel === "windows" && term === "powershell")
-      return `python .\\runner.py --server "${server}" --code "${code}" --workspace "${ws}"`;
+      return `python .\\runner.py --server "${server}" --code "${code}"`;
     if (osSel === "windows")
-      return `python runner.py --server "${server}" --code "${code}" --workspace "${ws}"`;
-    return `python3 ./runner.py --server "${server}" --code "${code}" --workspace "${ws}"`;
+      return `python runner.py --server "${server}" --code "${code}"`;
+    return `python3 ./runner.py --server "${server}" --code "${code}"`;
   };
   const cmd = buildCmd();
-  const ver = "1.2";
+  const ver = "1.3";
   const downloadUrl = `${API}/runner/download`;
 
   const step = session?.approved ? 3 : session?.connected ? 2 : 1;
@@ -187,7 +186,7 @@ export default function ConnectWorkspace() {
                 </>
               )}
 
-              <div className="text-xs text-zinc-500 mb-1">3. Download the runner into a folder, open a terminal there, and run:</div>
+              <div className="text-xs text-zinc-500 mb-1">3. Put <span className="font-mono text-zinc-400">runner.py</span> inside the folder you want HIVE to work in, open a terminal <span className="text-zinc-300">in that folder</span>, and run:</div>
               <div className="flex items-center justify-between mb-1">
                 <a href={downloadUrl} data-testid="download-runner-btn" className="text-xs text-emerald-400 flex items-center gap-1 hover:text-emerald-300"><Copy className="w-3 h-3" /> Download runner.py</a>
                 <button onClick={() => { navigator.clipboard.writeText(cmd); toast.success("Command copied"); }} data-testid="copy-command-btn" className="text-xs text-sky-400 flex items-center gap-1"><Copy className="w-3 h-3" /> Copy command</button>
@@ -195,7 +194,7 @@ export default function ConnectWorkspace() {
               <pre data-testid="runner-command" className="bg-zinc-950 border border-zinc-800 rounded-lg p-3 text-[12px] text-zinc-300 font-mono overflow-x-auto whitespace-pre-wrap">{cmd}</pre>
               <div className="text-xs text-zinc-500 mt-2">Pairing code: <span className="text-sky-400 font-mono">{session.code}</span> · you'll approve the exact folder next.</div>
               <div className="text-[11px] text-amber-400/80 mt-2 flex items-center gap-1" data-testid="runner-version-note">
-                Runner v{ver} required — always re-download to replace any older <span className="font-mono">runner.py</span>. It stays running and prints <span className="font-mono">[HIVE] Runner connected</span>; leave that terminal open.
+                Runner v{ver} — the folder you run it from becomes your workspace. Always re-download to replace any older <span className="font-mono">runner.py</span>; leave the terminal open (it prints <span className="font-mono">[HIVE] Runner connected</span>).
               </div>
             </div>
           )}
