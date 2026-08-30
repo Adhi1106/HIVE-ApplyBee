@@ -155,3 +155,24 @@ review + deterministic controlled issue → identify responsible agent → recov
   then nested writes. Runner list() now returns POSIX-style paths so verification matches on Windows.
 - VERIFIED end-to-end (real runner subprocess, external wss, empty workspace): BOTH acceptance tasks now VERIFIED on
   disk — hive_test.txt="HIVE LOCAL TEST SUCCESS" and HIVE-Demo/test.txt="Created by HIVE". ACCEPTANCE: PASS.
+
+## 2026-08-30 (4) — Additive monetization: subscriptions + credits + Razorpay
+- ADDITIVE ONLY. Runner/WebSocket/ConnectWorkspace/local-file logic untouched.
+- New user = exactly 10 credits (billing.FREE_CREDITS). 1 credit deducted per mission submit (demo + local),
+  backend-authoritative in db.users. Decoupled orchestrator _spend_ai from user credits (AI now always-on when a
+  live provider exists) so the 10-credit balance is a clean 1-per-mission counter.
+- DEMO_MODE=true (backend/.env flag): at 0 credits the navbar goes RED + shows exhausted banner but missions STILL run.
+  Flip DEMO_MODE=false later to 402-block at 0. Single flag in billing.py.
+- Lazy resets (no browser timer): free restores to 10 2h after exhaustion; paid refreshes monthly allowance; expiry
+  downgrades to Free. Implemented in billing.compute_resets, applied on GET /api/credits and before deduction.
+- Plans (modular in billing.PLANS): Free ₹0/10, Pro ₹499·₹4990/100, Business ₹1999·₹19990/500. Monthly+Yearly toggle.
+- Razorpay (test keys in backend/.env, secret server-side only): POST /api/create-order, POST /api/verify-payment
+  (HMAC signature verified server-side, idempotent per order — no double grant), optional /api/razorpay/webhook,
+  GET /api/razorpay/config (public key id only), GET /api/plans. On verified payment -> billing.activate grants the
+  monthly allowance + sets plan/expiry.
+- Frontend: new /subscription page + navbar item, live navbar credits (5s poll + 'hive-credits-refresh' event) that
+  turns red at 0 and links to /subscription. Sonner snackbars for success/failure/cancel/verification-failure.
+- VERIFIED: fresh=10; mission -1; plans/config; real orders (₹499=49900, yearly ₹19990=1999000); invalid plan 400;
+  bad-signature verify 400 with NO grant; reset logic unit-tested; demo-mode mission at 0 => HTTP 200; navbar red +
+  exhausted banner; REAL Razorpay checkout modal opens with a live order/iframe. MANUAL leg remaining: entering a test
+  card in Razorpay's iframe to complete an actual payment (architecture + server-side verify already proven).

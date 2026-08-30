@@ -14,6 +14,14 @@ export const getCredits = () =>
   axios.get(`${API}/credits`).then((r) => r.data);
 export const renewCredits = () =>
   axios.post(`${API}/credits/renew`).then((r) => r.data);
+export const getPlans = () =>
+  axios.get(`${API}/plans`).then((r) => r.data);
+export const razorpayConfig = () =>
+  axios.get(`${API}/razorpay/config`).then((r) => r.data);
+export const createOrder = (plan, billing) =>
+  axios.post(`${API}/create-order`, { plan, billing }).then((r) => r.data);
+export const verifyPayment = (payload) =>
+  axios.post(`${API}/verify-payment`, payload).then((r) => r.data);
 export const listProjects = () =>
   axios.get(`${API}/projects`).then((r) => r.data);
 export const getWorkforce = () =>

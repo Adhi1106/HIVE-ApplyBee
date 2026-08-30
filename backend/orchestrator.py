@@ -46,22 +46,11 @@ class Orchestrator:
 
     # ---------------- credit gating (never kills a running mission) ----------------
     async def _spend_ai(self, mission_id: str, cost: int) -> bool:
-        """Deduct credits for a NEW AI operation. Returns False (and flags the mission)
-        when the balance is exhausted, so the caller can fall back to deterministic work."""
-        res = await self.db.users.update_one(
-            {"id": "default-user", "credits": {"$gte": cost}},
-            {"$inc": {"credits": -cost}},
-        )
-        if res.modified_count:
-            await self.db.missions.update_one({"id": mission_id}, {"$inc": {"credits_used": cost}})
-            return True
-        await self.db.missions.update_one({"id": mission_id}, {"$set": {"credits_exhausted": True}})
-        if mission_id not in _warned:
-            _warned.add(mission_id)
-            await self.emit(mission_id, "CREDITS_EXHAUSTED",
-                            "Demo credits exhausted — continuing with safe deterministic execution so the mission can finish and verify.",
-                            level="warning", actor="HIVE")
-        return False
+        """AI gating is decoupled from the user-facing credit balance (which is
+        now a separate 1-credit-per-mission subscription counter). Real AI is
+        used whenever a live provider is configured; otherwise we fall back to
+        the deterministic mock. User credits are never touched here."""
+        return bool(provider.live_available())
 
     async def _ai_plan(self, mission_id, goal):
         if await self._spend_ai(mission_id, AI_PLAN_COST):

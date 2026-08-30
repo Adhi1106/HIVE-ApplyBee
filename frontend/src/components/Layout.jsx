@@ -1,5 +1,5 @@
-import { Outlet, NavLink, Link } from "react-router-dom";
-import { useEffect, useState } from "react";
+import { Outlet, NavLink, Link, useNavigate } from "react-router-dom";
+import { useEffect, useState, useCallback } from "react";
 import { Hexagon, Zap } from "lucide-react";
 import { getCredits } from "@/lib/api";
 
@@ -20,13 +20,27 @@ const navItems = [
   { to: "/connect", label: "Runner" },
   { to: "/workforce", label: "Workforce" },
   { to: "/history", label: "Mission History" },
+  { to: "/subscription", label: "Subscription" },
 ];
 
 export default function Layout() {
   const [credits, setCredits] = useState(null);
-  useEffect(() => {
-    getCredits().then((d) => setCredits(d?.credits)).catch(() => {});
+  const [plan, setPlan] = useState("free");
+  const navigate = useNavigate();
+
+  const refresh = useCallback(() => {
+    getCredits().then((d) => { setCredits(d?.credits ?? null); setPlan(d?.plan || "free"); }).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    refresh();
+    const id = setInterval(refresh, 5000);
+    const onEvt = () => refresh();
+    window.addEventListener("hive-credits-refresh", onEvt);
+    return () => { clearInterval(id); window.removeEventListener("hive-credits-refresh", onEvt); };
+  }, [refresh]);
+
+  const zero = credits !== null && credits <= 0;
 
   return (
     <div className="min-h-screen flex flex-col">
@@ -52,17 +66,24 @@ export default function Layout() {
               ))}
             </nav>
           </div>
-          <NavLink
-            to="/credits"
+          <button
+            onClick={() => navigate("/subscription")}
             data-testid="nav-credits"
-            className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-zinc-800 bg-zinc-900/60 hover:border-sky-500/40 transition-colors"
+            title={zero ? "Free credits exhausted — click to upgrade" : `${plan.toUpperCase()} plan`}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-full border transition-colors ${
+              zero
+                ? "border-red-500/60 bg-red-500/10 hover:bg-red-500/20 animate-pulse"
+                : "border-zinc-800 bg-zinc-900/60 hover:border-sky-500/40"
+            }`}
           >
-            <Zap className="w-4 h-4 text-sky-400" />
-            <span className="font-mono text-sm text-zinc-200" data-testid="credits-badge">
+            <Zap className={`w-4 h-4 ${zero ? "text-red-400" : "text-sky-400"}`} />
+            <span className={`font-mono text-sm ${zero ? "text-red-300 font-bold" : "text-zinc-200"}`} data-testid="credits-badge">
               {credits ?? "—"}
             </span>
-            <span className="text-xs text-zinc-500">credits</span>
-          </NavLink>
+            <span className={`text-xs ${zero ? "text-red-400/80" : "text-zinc-500"}`}>
+              {zero ? "exhausted" : "credits"}
+            </span>
+          </button>
         </div>
       </header>
       <main className="flex-1">

@@ -1,17 +1,21 @@
-from fastapi import FastAPI, APIRouter, HTTPException, WebSocket
+from fastapi import FastAPI, APIRouter, HTTPException, WebSocket, Request
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
 import os
 import asyncio
 import logging
+import uuid
+import razorpay
 from pathlib import Path
+from pydantic import BaseModel
 
 from models import Mission, MissionCreate, LocalMissionCreate, now_iso
 from orchestrator import Orchestrator
 from local_orchestrator import LocalOrchestrator
 from runner_hub import hub
 from provider import provider
+import billing
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -20,6 +24,11 @@ mongo_url = os.environ['MONGO_URL']
 client = AsyncIOMotorClient(mongo_url)
 db = client[os.environ['DB_NAME']]
 
+RAZORPAY_KEY_ID = os.environ.get('RAZORPAY_KEY_ID', '')
+RAZORPAY_KEY_SECRET = os.environ.get('RAZORPAY_KEY_SECRET', '')
+RAZORPAY_WEBHOOK_SECRET = os.environ.get('RAZORPAY_WEBHOOK_SECRET', '')
+rzp = razorpay.Client(auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET)) if RAZORPAY_KEY_ID else None
+
 app = FastAPI(title="HIVE")
 api_router = APIRouter(prefix="/api")
 
@@ -27,7 +36,6 @@ orchestrator = Orchestrator(db)
 local_orchestrator = LocalOrchestrator(db)
 
 DEFAULT_USER = "default-user"
-STARTING_CREDITS = 500
 DEFAULT_PROJECT = "ai-workforce"
 
 EXAMPLE_MISSIONS = [
@@ -42,7 +50,43 @@ DEMO_MISSION = "Analyze a fictional SaaS product whose customer churn has increa
 async def ensure_user():
     u = await db.users.find_one({"id": DEFAULT_USER})
     if not u:
-        await db.users.insert_one({"id": DEFAULT_USER, "name": "HIVE Operator", "credits": STARTING_CREDITS, "created_at": now_iso()})
+        doc = {"id": DEFAULT_USER, "name": "HIVE Operator", "created_at": now_iso()}
+        doc.update(billing.default_user_fields())
+        await db.users.insert_one(doc)
+        return
+    # backfill billing fields for pre-existing users without wiping their balance
+    missing = {k: v for k, v in billing.default_user_fields().items() if k not in u}
+    if missing:
+        await db.users.update_one({"id": DEFAULT_USER}, {"$set": missing})
+
+
+async def get_user_synced():
+    """Fetch the user and apply any due lazy resets (backend-authoritative)."""
+    await ensure_user()
+    u = await db.users.find_one({"id": DEFAULT_USER}, {"_id": 0})
+    updates = billing.compute_resets(u)
+    if updates:
+        await db.users.update_one({"id": DEFAULT_USER}, {"$set": updates})
+        u.update(updates)
+    return u
+
+
+async def consume_credit():
+    """Deduct exactly 1 credit for a submitted mission. In DEMO_MODE the app is
+    never blocked at 0; otherwise a 0 balance raises 402 so the caller can
+    prompt an upgrade. Returns the refreshed user."""
+    u = await get_user_synced()
+    if u.get("credits", 0) <= 0:
+        if not billing.DEMO_MODE:
+            raise HTTPException(status_code=402, detail="You're out of credits. Upgrade to continue.")
+        return u  # demo: allow, stay at 0
+    new_credits = u["credits"] - 1
+    updates = {"credits": new_credits}
+    if new_credits <= 0:
+        updates.update(billing.on_exhausted({**u, **updates}))
+    await db.users.update_one({"id": DEFAULT_USER}, {"$set": updates})
+    u.update(updates)
+    return u
 
 
 async def ensure_default_project():
@@ -82,19 +126,22 @@ async def examples():
 
 @api_router.get("/credits")
 async def credits():
-    await ensure_user()
-    u = await db.users.find_one({"id": DEFAULT_USER}, {"_id": 0})
-    return u
+    u = await get_user_synced()
+    return billing.public_state(u)
 
 
 @api_router.post("/credits/renew")
 async def renew_credits():
-    """Demo-only: reset the demo credit balance. A real subscription/billing
-    provider will replace this endpoint later (kept modular on purpose)."""
+    """Demo-only: restore the FREE balance immediately (skips the 2h wait)."""
     await ensure_user()
-    await db.users.update_one({"id": DEFAULT_USER}, {"$set": {"credits": STARTING_CREDITS}})
-    u = await db.users.find_one({"id": DEFAULT_USER}, {"_id": 0})
-    return u
+    await db.users.update_one({"id": DEFAULT_USER}, {"$set": {"credits": billing.FREE_CREDITS, "credits_reset_at": None}})
+    u = await get_user_synced()
+    return billing.public_state(u)
+
+
+@api_router.get("/plans")
+async def plans():
+    return {"plans": list(billing.PLANS.values()), "currency": billing.CURRENCY, "demo_mode": billing.DEMO_MODE}
 
 
 @api_router.post("/missions")
@@ -106,6 +153,7 @@ async def create_mission(body: MissionCreate):
         raise HTTPException(status_code=400, detail="This mission requests unsafe or disallowed actions and was blocked by HIVE safety policy.")
     await ensure_user()
     await ensure_default_project()
+    await consume_credit()
     mission = Mission(goal=goal, user_id=DEFAULT_USER, mode="demo", project_id=DEFAULT_PROJECT,
                       provider="openai" if provider.live_available() else "mock")
     await db.missions.insert_one(mission.model_dump())
@@ -299,6 +347,7 @@ async def create_local_mission(body: LocalMissionCreate):
     if not s or s.status != "approved":
         raise HTTPException(status_code=400, detail="Connect and approve a workspace runner first.")
     await ensure_user()
+    await consume_credit()
     project = await get_or_create_local_project(s)
     mission = Mission(goal=body.goal, user_id=DEFAULT_USER, type="local", mode="local",
                       project_id=project["id"], workspace_id=s.workspace,
@@ -307,6 +356,96 @@ async def create_local_mission(body: LocalMissionCreate):
     s.current_mission = mission.id
     asyncio.create_task(local_orchestrator.run(mission.id, body.goal, body.session_id))
     return {"id": mission.id, "status": mission.status}
+
+
+# ============================ Razorpay billing ============================
+class OrderReq(BaseModel):
+    plan: str
+    billing: str = "monthly"
+
+
+class VerifyReq(BaseModel):
+    razorpay_order_id: str
+    razorpay_payment_id: str
+    razorpay_signature: str
+    plan: str
+    billing: str = "monthly"
+
+
+@api_router.get("/razorpay/config")
+async def razorpay_config():
+    """Public checkout key only — the secret NEVER leaves the backend."""
+    return {"key_id": RAZORPAY_KEY_ID, "configured": bool(rzp), "currency": billing.CURRENCY}
+
+
+@api_router.post("/create-order")
+async def create_order(body: OrderReq):
+    if not rzp:
+        raise HTTPException(status_code=503, detail="Payments are not configured.")
+    if body.plan not in ("pro", "business"):
+        raise HTTPException(status_code=400, detail="Choose a paid plan (pro or business).")
+    if body.billing not in ("monthly", "yearly"):
+        raise HTTPException(status_code=400, detail="Invalid billing period.")
+    amount = billing.order_amount_paise(body.plan, body.billing)
+    if amount < 100:
+        raise HTTPException(status_code=400, detail="Invalid order amount.")
+    receipt = f"hive_{body.plan}_{uuid.uuid4().hex[:8]}"[:40]
+    try:
+        order = rzp.order.create({"amount": amount, "currency": billing.CURRENCY,
+                                  "receipt": receipt, "payment_capture": 1,
+                                  "notes": {"plan": body.plan, "billing": body.billing}})
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"razorpay order failed: {e}")
+        raise HTTPException(status_code=502, detail="Could not create payment order.")
+    await db.payments.insert_one({"order_id": order["id"], "user_id": DEFAULT_USER,
+                                  "plan": body.plan, "billing": body.billing, "amount": amount,
+                                  "status": "created", "created_at": now_iso()})
+    return {"order_id": order["id"], "amount": amount, "currency": billing.CURRENCY, "key_id": RAZORPAY_KEY_ID}
+
+
+@api_router.post("/verify-payment")
+async def verify_payment(body: VerifyReq):
+    if not rzp:
+        raise HTTPException(status_code=503, detail="Payments are not configured.")
+    pay = await db.payments.find_one({"order_id": body.razorpay_order_id})
+    if not pay:
+        raise HTTPException(status_code=400, detail="Unknown order.")
+    # Idempotency: never grant twice for the same order.
+    if pay.get("status") == "paid":
+        u = await get_user_synced()
+        return {"ok": True, "already": True, **billing.public_state(u)}
+    try:
+        rzp.utility.verify_payment_signature({
+            "razorpay_order_id": body.razorpay_order_id,
+            "razorpay_payment_id": body.razorpay_payment_id,
+            "razorpay_signature": body.razorpay_signature,
+        })
+    except razorpay.errors.SignatureVerificationError:
+        await db.payments.update_one({"order_id": body.razorpay_order_id}, {"$set": {"status": "verification_failed"}})
+        raise HTTPException(status_code=400, detail="Payment verification failed.")
+    # Verified — activate using the plan stored server-side with the order.
+    plan = pay.get("plan", body.plan)
+    billing_period = pay.get("billing", body.billing)
+    await db.payments.update_one({"order_id": body.razorpay_order_id},
+                                 {"$set": {"status": "paid", "payment_id": body.razorpay_payment_id, "paid_at": now_iso()}})
+    await ensure_user()
+    updates = billing.activate(plan, billing_period)
+    await db.users.update_one({"id": DEFAULT_USER}, {"$set": updates})
+    u = await get_user_synced()
+    return {"ok": True, "plan": plan, **billing.public_state(u)}
+
+
+@api_router.post("/razorpay/webhook")
+async def razorpay_webhook(request: Request):
+    if not RAZORPAY_WEBHOOK_SECRET:
+        return {"status": "ignored"}
+    payload = await request.body()
+    signature = request.headers.get("X-Razorpay-Signature", "")
+    try:
+        rzp.utility.verify_webhook_signature(payload.decode(), signature, RAZORPAY_WEBHOOK_SECRET)
+    except Exception:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail="Invalid webhook signature.")
+    return {"status": "ok"}
 
 
 app.include_router(api_router)

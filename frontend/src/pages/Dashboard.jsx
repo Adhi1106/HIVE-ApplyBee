@@ -28,16 +28,18 @@ export default function Dashboard() {
       toast.error("Describe what you want your workforce to accomplish.");
       return;
     }
-    if (credits !== null && credits <= 0) {
-      setShowCreditModal(true);
-      return;
-    }
     setLoading(true);
     try {
       const res = await createMission(g);
+      window.dispatchEvent(new Event("hive-credits-refresh"));
       navigate(`/mission/${res.id}`);
     } catch (e) {
-      toast.error(e?.response?.data?.detail || "Could not start mission.");
+      if (e?.response?.status === 402) {
+        toast.error("You're out of credits. Upgrade to keep running missions.");
+        navigate("/subscription");
+      } else {
+        toast.error(e?.response?.data?.detail || "Could not start mission.");
+      }
       setLoading(false);
     }
   };
