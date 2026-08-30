@@ -286,11 +286,13 @@ class LocalOrchestrator:
 
     def _doer_role(self, goal: str):
         g = goal.lower()
+        if any(k in g for k in ["create", "file", "code", "script", "python", ".py", "bug", "fix", "refactor", "deploy"]):
+            return ("Cody", "Code Agent", "Create or modify the requested code/files in the workspace.")
         if any(k in g for k in ["summary", "summarize", "readme", "document", "docs", "write"]):
             return ("Nova", "Documentation Worker", "Read project files and produce the requested document.")
-        if any(k in g for k in ["ml", "model", "notebook", "train", "submission"]):
+        if any(k in g for k in ["ml", "model", "notebook", "train", "submission", "dataset"]):
             return ("Kai", "ML Engineer", "Inspect and prepare the ML project files.")
-        if any(k in g for k in ["test", "qa", "validate"]):
+        if any(k in g for k in ["test", "qa", "validate", "verify"]):
             return ("Iris", "QA Engineer", "Create and run lightweight checks over the files.")
         return ("Rex", "Automation Worker", "Perform the requested file operations safely.")
 
@@ -367,7 +369,10 @@ class LocalOrchestrator:
         files_blob = "\n\n".join(f"### {k}\n{v}" for k, v in contents.items()) or "(no readable files)"
         if await self.o._spend_ai(mission_id, 3):
             try:
-                sysp = (f"You are {dname}, a {drole}, using safe file tools in an approved workspace. "
+                sysp = (f"You are {dname}, a {drole}, a specialist inside a coordinated HIVE AI workforce operating in LOCAL mode. "
+                        "You do NOT access the user's computer directly; you request controlled file operations through the approved Local Runner, "
+                        "which are restricted to the approved workspace. Never invent file contents, never reference paths outside the workspace, and never "
+                        "claim an operation happened — the Runner performs and confirms it. "
                         "Given the goal and current files, output STRICT JSON: {\"summary\": str, "
                         "\"creates\": [{\"path\": relative_path, \"content\": str}], \"modifies\": [{\"path\": relative_path, \"content\": str}]}. "
                         "Use ONLY relative paths inside the workspace. Keep content concise and real. Respond with JSON only.")

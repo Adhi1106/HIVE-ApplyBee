@@ -6,7 +6,7 @@ import {
 import { toast } from "sonner";
 import {
   runnerPair, runnerSession, runnerApprove, runnerTree, runnerSeedDemo,
-  createLocalMission, runnerWsUrl,
+  createLocalMission, runnerWsUrl, API,
 } from "@/lib/api";
 
 export default function ConnectWorkspace() {
@@ -15,6 +15,8 @@ export default function ConnectWorkspace() {
   const [tree, setTree] = useState([]);
   const [busy, setBusy] = useState(false);
   const [customGoal, setCustomGoal] = useState("");
+  const [osSel, setOsSel] = useState("windows");
+  const [term, setTerm] = useState("powershell");
   const timer = useRef(null);
   const navigate = useNavigate();
 
@@ -76,10 +78,18 @@ export default function ConnectWorkspace() {
     }
   };
 
-  const cmd = `python runner.py \\
-  --server ${runnerWsUrl()} \\
-  --code ${session?.code || "YOUR-CODE"} \\
-  --workspace /absolute/path/to/your/project`;
+  const code = session?.code || "YOUR-CODE";
+  const server = runnerWsUrl();
+  const buildCmd = () => {
+    const ws = osSel === "windows" ? "C:\\Users\\you\\HIVE-Test" : "/path/to/your/project";
+    if (osSel === "windows" && term === "powershell")
+      return `python .\\runner.py --server "${server}" --code "${code}" --workspace "${ws}"`;
+    if (osSel === "windows")
+      return `python runner.py --server "${server}" --code "${code}" --workspace "${ws}"`;
+    return `python3 ./runner.py --server "${server}" --code "${code}" --workspace "${ws}"`;
+  };
+  const cmd = buildCmd();
+  const downloadUrl = `${API}/runner/download`;
 
   const step = session?.approved ? 3 : session?.connected ? 2 : 1;
 
@@ -123,13 +133,40 @@ export default function ConnectWorkspace() {
       {session && !session.approved && (
         <div className="space-y-4" data-testid="pairing-panel">
           {session.code !== "HIVE-DEMO" && (
-            <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-5">
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-sm text-zinc-300 font-medium">Run the HIVE Runner on your computer</span>
-                <button onClick={() => { navigator.clipboard.writeText(cmd); toast.success("Command copied"); }} className="text-xs text-sky-400 flex items-center gap-1"><Copy className="w-3 h-3" /> Copy</button>
+            <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 p-5" data-testid="pair-own-guide">
+              <div className="text-sm text-white font-medium mb-3">Run the HIVE Runner on your computer</div>
+
+              <div className="text-xs text-zinc-500 mb-1">1. Choose your system</div>
+              <div className="flex gap-1.5 mb-3">
+                {[["windows", "Windows"], ["mac", "macOS"], ["linux", "Linux"]].map(([k, label]) => (
+                  <button key={k} data-testid={`os-${k}`} onClick={() => setOsSel(k)}
+                    className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${osSel === k ? "border-sky-500/40 text-sky-400 bg-sky-500/10" : "border-zinc-800 text-zinc-400 hover:text-white"}`}>
+                    {label}
+                  </button>
+                ))}
               </div>
-              <pre className="bg-zinc-950 border border-zinc-800 rounded-lg p-3 text-[12px] text-zinc-300 font-mono overflow-x-auto whitespace-pre-wrap">{cmd}</pre>
-              <div className="text-xs text-zinc-500 mt-2">Pairing code: <span className="text-sky-400 font-mono">{session.code}</span></div>
+
+              {osSel === "windows" && (
+                <>
+                  <div className="text-xs text-zinc-500 mb-1">2. Choose your terminal</div>
+                  <div className="flex gap-1.5 mb-3">
+                    {[["powershell", "PowerShell"], ["cmd", "Command Prompt"]].map(([k, label]) => (
+                      <button key={k} data-testid={`term-${k}`} onClick={() => setTerm(k)}
+                        className={`text-xs px-3 py-1.5 rounded-full border transition-colors ${term === k ? "border-sky-500/40 text-sky-400 bg-sky-500/10" : "border-zinc-800 text-zinc-400 hover:text-white"}`}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </>
+              )}
+
+              <div className="text-xs text-zinc-500 mb-1">3. Download the runner into a folder, open a terminal there, and run:</div>
+              <div className="flex items-center justify-between mb-1">
+                <a href={downloadUrl} data-testid="download-runner-btn" className="text-xs text-emerald-400 flex items-center gap-1 hover:text-emerald-300"><Copy className="w-3 h-3" /> Download runner.py</a>
+                <button onClick={() => { navigator.clipboard.writeText(cmd); toast.success("Command copied"); }} data-testid="copy-command-btn" className="text-xs text-sky-400 flex items-center gap-1"><Copy className="w-3 h-3" /> Copy command</button>
+              </div>
+              <pre data-testid="runner-command" className="bg-zinc-950 border border-zinc-800 rounded-lg p-3 text-[12px] text-zinc-300 font-mono overflow-x-auto whitespace-pre-wrap">{cmd}</pre>
+              <div className="text-xs text-zinc-500 mt-2">Pairing code: <span className="text-sky-400 font-mono">{session.code}</span> · you'll approve the exact folder next.</div>
             </div>
           )}
 
@@ -167,7 +204,7 @@ export default function ConnectWorkspace() {
           <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-5 flex items-center gap-3">
             <CheckCircle2 className="w-6 h-6 text-emerald-400" />
             <div className="flex-1">
-              <div className="font-display font-semibold text-white">CONNECTED</div>
+              <div className="font-display font-semibold text-white flex items-center gap-2">CONNECTED <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-400 font-mono">● {session.os || "runner"} · v{session.version || "1.0"}</span></div>
               <div className="text-xs text-zinc-400 font-mono">{session.workspace}</div>
             </div>
             <div className="flex gap-2">

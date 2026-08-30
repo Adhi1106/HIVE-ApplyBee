@@ -1,14 +1,2 @@
-# Project
-
-Organized and prepared by HIVE.
-
-## Structure
-
-- `src/` — source code
-- `data/` — datasets
-- `docs/` — documents and notes
-- `misc/` — everything else
-
-## Detected dependencies
-
-None detected.
+HIVE Test Project
+A tiny demo folder.

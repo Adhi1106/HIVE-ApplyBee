@@ -10,11 +10,16 @@ import asyncio
 import secrets
 import uuid
 import logging
+from datetime import datetime, timezone
 from typing import Dict, Any, Optional
 
 from fastapi import WebSocket, WebSocketDisconnect
 
 logger = logging.getLogger("hive.runner_hub")
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 DEMO_CODE = "HIVE-DEMO"
 DEMO_SESSION = "demo"
@@ -28,8 +33,13 @@ class Session:
         self.runner_id: Optional[str] = None
         self.workspace: Optional[str] = None
         self.machine: Optional[str] = None
+        self.os: Optional[str] = None
+        self.version: Optional[str] = None
         self.capabilities = []
         self.permissions = []
+        self.connected_at: Optional[str] = None
+        self.last_heartbeat: Optional[str] = None
+        self.current_mission: Optional[str] = None
 
     def public(self) -> Dict[str, Any]:
         return {
@@ -38,10 +48,15 @@ class Session:
             "status": self.status,
             "workspace": self.workspace,
             "machine": self.machine,
+            "os": self.os,
+            "version": self.version,
             "capabilities": self.capabilities,
             "permissions": self.permissions,
             "connected": self.status in ("connected", "approved"),
             "approved": self.status == "approved",
+            "connected_at": self.connected_at,
+            "last_heartbeat": self.last_heartbeat,
+            "current_mission": self.current_mission,
         }
 
 
@@ -120,8 +135,12 @@ class RunnerHub:
                     session.runner_id = runner_id
                     session.workspace = msg.get("workspace")
                     session.machine = msg.get("machine")
+                    session.os = msg.get("os")
+                    session.version = msg.get("version")
                     session.capabilities = msg.get("capabilities", [])
                     session.permissions = msg.get("permissions", [])
+                    session.connected_at = _now()
+                    session.last_heartbeat = _now()
                     if session.status != "approved":
                         session.status = "connected"
                     self.conns[runner_id] = ws
@@ -131,8 +150,12 @@ class RunnerHub:
                     fut = self.pending.get(msg.get("id"))
                     if fut and not fut.done():
                         fut.set_result(msg)
-                elif t == "pong":
-                    pass
+                elif t in ("heartbeat", "pong", "ping"):
+                    if session:
+                        session.last_heartbeat = _now()
+                        if session.status == "disconnected" and session.runner_id == runner_id:
+                            session.status = "approved" if session.status == "approved" else "connected"
+                    await ws.send_json({"type": "heartbeat_ack"})
         except WebSocketDisconnect:
             pass
         except Exception as e:  # noqa: BLE001

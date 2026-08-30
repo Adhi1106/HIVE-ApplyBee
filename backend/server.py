@@ -265,6 +265,14 @@ async def runner_seed_demo(sid: str):
     return await hub.call_tool(sid, "list", {"path": "."})
 
 
+@api_router.get("/runner/download")
+async def runner_download():
+    """Serve the CURRENT, real persistent runner.py so users never run a stale stub."""
+    from fastapi.responses import FileResponse
+    path = ROOT_DIR.parent / "hive_runner" / "runner.py"
+    return FileResponse(str(path), media_type="text/x-python", filename="runner.py")
+
+
 @api_router.post("/missions/local")
 async def create_local_mission(body: LocalMissionCreate):
     s = hub.get(body.session_id)
@@ -276,6 +284,7 @@ async def create_local_mission(body: LocalMissionCreate):
                       project_id=project["id"], workspace_id=s.workspace,
                       session_id=body.session_id, workspace=s.workspace, provider="runner")
     await db.missions.insert_one(mission.model_dump())
+    s.current_mission = mission.id
     asyncio.create_task(local_orchestrator.run(mission.id, body.goal, body.session_id))
     return {"id": mission.id, "status": mission.status}
 

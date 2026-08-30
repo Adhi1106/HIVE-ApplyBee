@@ -91,3 +91,19 @@ review + deterministic controlled issue → identify responsible agent → recov
 - Verified directly via curl + screenshots (incremental credits, exhaustion+renew, worker drill-down, projects,
   real README→summary on disk, organize idempotency+recovery, mode badges, project-scoped history). The
   full testing-agent sweep timed out purely due to many slow live-AI missions (infra), not defects.
+
+## Real Local Runner connection + real filesystem ops (2026-08-30)
+- Persistent runner (hive_runner/runner.py): connects over WSS, heartbeat every 15s, never exits, auto-reconnects,
+  spec-style terminal logs, unbuffered stdout, sends OS/version on register. Tools: list/read/write/mkdir/move/
+  rename/copy/git; DELETE requires explicit authorized. Sandbox rejects ../ traversal + absolute paths (verified).
+- Backend hub tracks real state (os, version, connected_at, last_heartbeat, current_mission); flips to
+  disconnected when runner closes (verified approved->disconnected->connected). GET /api/runner/download serves
+  the CURRENT runner.py (fixes users running a stale stub).
+- Real end-to-end verified on disk: "Create HIVE_TESTED.md" and "Create HELLO_HIVE.md" physically written;
+  README.md really read + summarized. Dynamic routing (Code Agent / Documentation Worker / ML Engineer / QA).
+  Reviewer verifies files exist on disk before VERIFIED. No fake success.
+- Connect UX: beginner Pair flow (OS + terminal selectors, Download runner.py, Copy dynamic wss command + real
+  pairing code, honest "Waiting for runner"), approve workspace -> real task input; custom local mission input.
+- Internal agent instructions hardened for LOCAL mode.
+- DEFERRED backlog: Replay mode, public mission sharing, real multi-user auth, subscription/pricing redesign,
+  Workforce-page global-capabilities split, filesystem watcher streaming.

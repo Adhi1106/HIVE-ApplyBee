@@ -24,6 +24,7 @@ import os
 import platform
 import shutil
 import subprocess
+import sys
 from pathlib import Path
 
 import websockets
@@ -102,6 +103,36 @@ class Workspace:
             shutil.copy2(str(src), str(dst))
         return {"from": kw["from"], "to": kw["to"]}
 
+    def delete(self, path=None, authorized=False, **kw):
+        # Destructive: requires explicit authorization from HIVE.
+        if not authorized:
+            raise ValueError("delete requires explicit authorization")
+        p = self._safe(path)
+        if p.is_dir():
+            shutil.rmtree(str(p))
+        else:
+            p.unlink(missing_ok=True)
+        return {"path": path, "deleted": True}
+
+    # friendly aliases so backend tool names always resolve
+    def list_files(self, **kw):
+        return self.list(**kw)
+
+    def read_file(self, **kw):
+        return self.read(**kw)
+
+    def create_file(self, **kw):
+        return self.write(**kw)
+
+    def write_file(self, **kw):
+        return self.write(**kw)
+
+    def modify_file(self, **kw):
+        return self.write(**kw)
+
+    def delete_file(self, **kw):
+        return self.delete(**kw)
+
     def _git(self, args):
         if not (self.root / ".git").exists():
             return {"available": False}
@@ -123,46 +154,78 @@ class Workspace:
         return fn(**args)
 
 
+async def _heartbeat(conn):
+    try:
+        while True:
+            await asyncio.sleep(15)
+            await conn.send(json.dumps({"type": "heartbeat"}))
+    except Exception:
+        return
+
+
 async def run(server, code, workspace):
     ws_env = Workspace(workspace)
-    print(f"[HIVE Runner] workspace = {ws_env.root}")
-    print(f"[HIVE Runner] connecting to {server} ...")
-    async for conn in websockets.connect(server, ping_interval=20, max_size=8_000_000):
+    print("HIVE Runner starting...")
+    print(f"OS: {platform.system()} ({platform.release()})")
+    print(f"Workspace: {ws_env.root}")
+    print(f"Connecting to HIVE... ({server})")
+    async for conn in websockets.connect(server, ping_interval=20, ping_timeout=20, max_size=8_000_000):
+        hb = None
         try:
+            print("Pairing...")
             await conn.send(json.dumps({
                 "type": "register",
                 "code": code,
                 "workspace": str(ws_env.root),
                 "machine": platform.node() or "local",
+                "os": platform.system(),
+                "version": "1.0.0",
                 "capabilities": CAPABILITIES,
                 "permissions": PERMISSIONS,
             }))
-            print("[HIVE Runner] registered, awaiting approval / tool calls")
+            hb = asyncio.ensure_future(_heartbeat(conn))
+            print("Connected \u2713")
+            print("Workspace ready \u2713")
+            print("Waiting for tasks...")
             async for raw in conn:
                 msg = json.loads(raw)
                 t = msg.get("type")
                 if t == "tool_call":
                     call_id = msg["id"]
+                    tool = msg.get("tool")
+                    args = msg.get("args") or {}
+                    tgt = args.get("path") or args.get("to") or ""
+                    print(f"Task received -> {tool} {tgt}".rstrip())
                     try:
-                        result = ws_env.dispatch(msg["tool"], msg.get("args"))
+                        result = ws_env.dispatch(tool, args)
                         await conn.send(json.dumps({"type": "tool_result", "id": call_id, "ok": True, "result": result}))
-                        print(f"  ✓ {msg['tool']} {msg.get('args', {})}")
+                        print(f"  Operation completed \u2713  ({tool} {tgt})".rstrip())
                     except Exception as e:  # noqa: BLE001
                         await conn.send(json.dumps({"type": "tool_result", "id": call_id, "ok": False, "error": str(e)}))
-                        print(f"  ✗ {msg['tool']}: {e}")
+                        print(f"  \u2717 {tool}: {e}")
+                    print("Waiting for tasks...")
                 elif t == "approved":
-                    print("[HIVE Runner] workspace approved by user ✓")
+                    print("Workspace approved by user \u2713")
+                elif t == "heartbeat_ack":
+                    pass
                 elif t == "error":
-                    print(f"[HIVE Runner] server error: {msg.get('error')}")
+                    print(f"Server error: {msg.get('error')}")
         except websockets.ConnectionClosed:
-            print("[HIVE Runner] connection closed, reconnecting...")
+            print("Connection lost. Attempting to reconnect...")
             await asyncio.sleep(2)
         except Exception as e:  # noqa: BLE001
-            print(f"[HIVE Runner] error: {e}; reconnecting...")
+            print(f"Error: {e}. Attempting to reconnect...")
             await asyncio.sleep(2)
+        finally:
+            if hb:
+                hb.cancel()
 
 
 def main():
+    try:
+        sys.stdout.reconfigure(line_buffering=True)
+    except Exception:
+        pass
     ap = argparse.ArgumentParser(description="HIVE Local Runner")
     ap.add_argument("--server", default=os.environ.get("HIVE_RUNNER_SERVER", "ws://localhost:8001/api/runner/ws"))
     ap.add_argument("--code", default=os.environ.get("HIVE_RUNNER_CODE", "HIVE-DEMO"))

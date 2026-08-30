@@ -1,1 +1,0 @@
-HIVE Demo Project: CSV ingestion with a small prediction model, used to demo the HIVE local runner.
